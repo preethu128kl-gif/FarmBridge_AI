@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "./api";
+import FarmingAssistant from "./FarmingAssistant";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft, ArrowRight, Bell, Boxes, Check, ChevronDown, Globe2, Heart,
@@ -10,6 +11,7 @@ import {
   Milk, Droplets, Flower2, Stethoscope, RefreshCw
 } from "lucide-react";
 import "./styles.css";
+import "./PaymentDemo.css";
 
 import landingFarm from "./assets/landing-farm.jpg";
 import consumerHero from "./assets/consumer-hero.jpg";
@@ -89,16 +91,25 @@ function Consumer({lang,setLang,go}) {
   const [view,setView] = useState("home");
   const [selectedProduct,setSelectedProduct] = useState(null);
 
-  const requireLogin = () => go("consumerLogin");
-  const loggedIn = !!localStorage.getItem("farmbridge_token");
+  let sessionUser = {};
+  try { sessionUser = JSON.parse(localStorage.getItem("farmbridge_user") || "{}"); }
+  catch { sessionUser = {}; }
+  const hasToken = !!localStorage.getItem("farmbridge_token");
+  const loggedIn = hasToken && sessionUser.role === "consumer";
+  const requireLogin = () => {
+    if (hasToken && sessionUser.role && sessionUser.role !== "consumer") {
+      alert("This session belongs to a farmer account. Sign in with a consumer account to access cart, wishlist, and consumer orders.");
+    }
+    go("consumerLogin");
+  };
 
   const loadCart = async () => {
-    if (!localStorage.getItem("farmbridge_token")) return;
+    if (!loggedIn) return;
     try { const data = await apiRequest("/cart"); setCart(data.items || []); }
     catch (e) { console.error(e); }
   };
   const loadWishlist = async () => {
-    if (!localStorage.getItem("farmbridge_token")) return;
+    if (!loggedIn) return;
     try { const data = await apiRequest("/wishlist"); setWishlist(data.items || []); }
     catch (e) { console.error(e); }
   };
@@ -120,7 +131,7 @@ function Consumer({lang,setLang,go}) {
   }, [products,category,query]);
 
   async function addProductToCart(product, quantity=1, silent=false) {
-    if (!localStorage.getItem("farmbridge_token")) { requireLogin(); return false; }
+    if (!loggedIn) { requireLogin(); return false; }
     try {
       await apiRequest("/cart", {method:"POST", body:JSON.stringify({productId:Number(product.id), quantity:Number(quantity)})});
       await loadCart();
@@ -132,7 +143,7 @@ function Consumer({lang,setLang,go}) {
   async function addToCart(product) { await addProductToCart(product,1,false); }
 
   async function toggleWishlist(product) {
-    if (!localStorage.getItem("farmbridge_token")) { requireLogin(); return; }
+    if (!loggedIn) { requireLogin(); return; }
     const existing = wishlist.find(item => Number(item.product?.id ?? item.productId ?? item.product_id) === Number(product.id));
     try {
       if (existing) {
@@ -181,8 +192,8 @@ function Consumer({lang,setLang,go}) {
       <button className="all-cat"><Menu size={17}/>{t.categories}</button>
       <div className="consumer-nav">
         {[["home",t.home],["vegetables",t.vegetables],["fruits",t.fruits],["grains",t.grains],["spices",t.spices],["dairy",t.dairy]].map(([key,label])=><button key={key} className={(key==="home"&&!category)||category===key?"active":""} onClick={()=>{setCategory(key==="home"?null:key);setView("home")}}>{label}</button>)}
-        <button onClick={()=>setView("orders")}>{t.orders}</button>
-        <button onClick={()=>setView("wishlist")}>Wishlist</button>
+        <button onClick={()=>loggedIn?setView("orders"):requireLogin()}>{t.orders}</button>
+        <button onClick={()=>loggedIn?setView("wishlist"):requireLogin()}>Wishlist</button>
       </div>
       <div className="consumer-actions">
         <div className="consumer-search"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={t.search}/>{query&&<X size={15} onClick={()=>setQuery("")}/>}</div>
@@ -449,6 +460,17 @@ function OrdersPage({go}) {
   async function trackOrder(){if(!track.trim())return;try{const d=await apiRequest(`/orders/track/${track.trim()}`);setTracked(d.order)}catch(e){alert(e.message)}}
   return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back</button><div className="cart-header"><h1>My Orders</h1><p>Order history and delivery tracking</p></div><div className="track-box"><input value={track} onChange={e=>setTrack(e.target.value)} placeholder="Enter Order ID e.g. ORD00001"/><button onClick={trackOrder}>Track</button></div>{tracked&&<OrderCard order={tracked}/>}<div className="order-history">{loading?<p>Loading orders...</p>:!orders.length?<div className="cart-empty"><Package size={50}/><h2>No orders yet</h2></div>:orders.map(o=><OrderCard key={o.id} order={o}/>)}</div></div>;
 }
+
+function orderPaymentLabel(method) {
+  return ({
+    COD: "Cash on Delivery",
+    GOOGLE_PAY_DEMO: "Google Pay Demo",
+    PHONEPE_DEMO: "PhonePe Demo",
+    PAYTM_DEMO: "Paytm Demo",
+    CARD_DEMO: "Card Demo",
+  })[method] || method || "Not recorded";
+}
+
 function OrderCard({ order }) {
   const status = (order.status || "placed").toLowerCase();
 
@@ -482,7 +504,9 @@ function OrderCard({ order }) {
       </span>
 
       <small>
-        {order.deliveryAddress || "Delivery address not available"}
+        <span>{order.deliveryAddress || "Delivery address not available"}</span>
+        <span className="order-payment-detail">Payment: {orderPaymentLabel(order.paymentMethod)}</span>
+        <span className="order-payment-detail">Payment status: {order.paymentStatus || "Not recorded"}{order.isDemoPayment ? " · DEMO ONLY" : ""}</span>
       </small>
 
       <div className="tracking-details">
@@ -507,9 +531,60 @@ function OrderCard({ order }) {
 }
 
 function CheckoutView({cart,loadCart,go,onDone}) {
-  const [address,setAddress]=useState(""); const [placing,setPlacing]=useState(false); const total=cart.reduce((s,i)=>s+Number(i.product?.price||0)*Number(i.quantity||1),0);
-  async function placeOrder(e){e.preventDefault();if(!address.trim())return alert("Please enter delivery address");try{setPlacing(true);await apiRequest("/orders",{method:"POST",body:JSON.stringify({deliveryAddress:address})});await loadCart();alert("Order placed successfully!");onDone()}catch(e){alert(e.message)}finally{setPlacing(false)}}
-  return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back to Cart</button><div className="cart-header"><h1>Checkout</h1><p>Confirm your delivery details</p></div><form className="checkout-layout" onSubmit={placeOrder}><div className="checkout-card"><h2>Delivery Address</h2><textarea value={address} onChange={e=>setAddress(e.target.value)} placeholder="House / Street / Area / City / Pincode" required/><h2>Payment</h2><div className="payment-note">Cash on Delivery / Demo Payment</div></div><div className="cart-summary"><h2>Order Summary</h2><div><span>Items</span><b>{cart.length}</b></div><div><span>Total</span><strong>₹{total.toFixed(2)}</strong></div><button className="checkout" disabled={placing}>{placing?"Placing Order...":"Place Order"} <ArrowRight size={17}/></button></div></form></div>;
+  const [address,setAddress]=useState("");
+  const [paymentMethod,setPaymentMethod]=useState("COD");
+  const [screen,setScreen]=useState("checkout");
+  const [placing,setPlacing]=useState(false);
+  const [error,setError]=useState("");
+  const [placedOrders,setPlacedOrders]=useState([]);
+  const [checkoutId]=useState(()=>globalThis.crypto?.randomUUID?.()||`checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const total=cart.reduce((sum,item)=>sum+Number(item.product?.price||0)*Number(item.quantity||1),0);
+  const paymentChoices=[
+    {method:"COD",title:"Cash on Delivery",detail:"Pay when your order arrives",group:"COD"},
+    {method:"GOOGLE_PAY_DEMO",title:"Google Pay",detail:"UPI Demo Only",group:"UPI DEMO"},
+    {method:"PHONEPE_DEMO",title:"PhonePe",detail:"UPI Demo Only",group:"UPI DEMO"},
+    {method:"PAYTM_DEMO",title:"Paytm",detail:"UPI Demo Only",group:"UPI DEMO"},
+    {method:"CARD_DEMO",title:"Card Payment",detail:"Demo only · no card details collected",group:"CARD DEMO"},
+  ];
+  const selectedPayment=paymentChoices.find(choice=>choice.method===paymentMethod)||paymentChoices[0];
+  const demoTotal=placedOrders.reduce((sum,order)=>sum+Number(order.totalAmount||0),0);
+
+  async function submitOrder(){
+    if(placing)return;
+    setPlacing(true);
+    setError("");
+    try{
+      const result=await apiRequest("/orders",{
+        method:"POST",
+        body:JSON.stringify({deliveryAddress:address,paymentMethod,checkoutId}),
+      });
+      setPlacedOrders(result.orders||[]);
+      setScreen("success");
+      try{await loadCart()}catch(loadError){console.error(loadError)}
+    }catch(requestError){
+      setError(requestError.message);
+    }finally{
+      setPlacing(false);
+    }
+  }
+
+  function continueCheckout(event){
+    event.preventDefault();
+    setError("");
+    if(paymentMethod==="COD")submitOrder();
+    else setScreen("demo-payment");
+  }
+
+  if(screen==="success"){
+    const demoPaid=placedOrders.some(order=>order.paymentStatus==="PAID_DEMO");
+    return <div className="cart-page"><div className="payment-result"><span className="payment-demo-tag">DEMO ONLY</span><h1>{demoPaid?"Demo Payment Successful — No Real Money Deducted":"Order Placed"}</h1><p>{demoPaid?"Your demo payment was recorded. No real transaction was made.":"Your order is confirmed. Payment is due on delivery."}</p><div className="payment-result-total"><span>Order total</span><strong>₹{demoTotal.toFixed(2)}</strong></div><div className="payment-result-meta"><span>{orderPaymentLabel(placedOrders[0]?.paymentMethod)}</span><span>{placedOrders[0]?.paymentStatus||"PENDING"}</span></div><button className="checkout" onClick={onDone}>View My Orders <ArrowRight size={17}/></button></div></div>;
+  }
+
+  if(screen==="demo-payment"){
+    return <div className="cart-page"><button className="back" onClick={()=>{setError("");setScreen("checkout")}}><ArrowLeft size={18}/> Cancel and return</button><div className="cart-header"><div><span className="payment-demo-tag">DEMO ONLY · NO REAL PAYMENT</span><h1>Demo Payment</h1><p>This screen does not connect to a bank or payment gateway.</p></div></div><section className="payment-demo-panel"><div className="payment-demo-method"><small>SELECTED METHOD</small><strong>{selectedPayment.title}</strong><span>{selectedPayment.group}</span></div><div className="payment-demo-total"><small>AMOUNT TO CONFIRM</small><strong>₹{total.toFixed(2)}</strong></div><p className="payment-demo-disclaimer">Clicking Pay Now records a simulated success only. No card details, UPI PIN, or banking credentials are requested.</p>{error&&<div className="checkout-error" role="alert">{error}</div>}<div className="payment-demo-actions"><button className="continue-shopping" type="button" disabled={placing} onClick={()=>{setError("");setScreen("checkout")}}>Cancel</button><button className="checkout" type="button" disabled={placing} onClick={submitOrder}>{placing?"Processing demo...":"Pay Now · Demo"} <ArrowRight size={17}/></button></div></section></div>;
+  }
+
+  return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back to Cart</button><div className="cart-header"><div><h1>Checkout</h1><p>Confirm your delivery details</p></div></div><form className="checkout-layout" onSubmit={continueCheckout}><div className="checkout-card"><h2>Delivery Address</h2><textarea value={address} onChange={event=>setAddress(event.target.value)} placeholder="House / Street / Area / City / Pincode" required/><h2>Payment Method</h2><div className="payment-method-list">{paymentChoices.map(choice=><label className={`payment-method-option ${paymentMethod===choice.method?"selected":""}`} key={choice.method}><input type="radio" name="paymentMethod" value={choice.method} checked={paymentMethod===choice.method} onChange={()=>setPaymentMethod(choice.method)}/><span className="payment-method-copy"><b>{choice.title}</b><small>{choice.detail}</small></span><span className={`payment-method-badge ${choice.group==="COD"?"cod":"demo"}`}>{choice.group}</span></label>)}</div><p className="payment-demo-disclaimer">UPI and card options are simulations for demonstration only. No real payment details are collected.</p>{error&&<div className="checkout-error" role="alert">{error}</div>}</div><div className="cart-summary"><h2>Order Summary</h2><div><span>Items</span><b>{cart.reduce((count,item)=>count+Number(item.quantity||1),0)}</b></div><div><span>Subtotal</span><b>₹{total.toFixed(2)}</b></div><div><span>Delivery</span><b>FREE</b></div><hr/><div className="grand-total"><span>Total</span><strong>₹{total.toFixed(2)}</strong></div><button className="checkout" disabled={placing||!cart.length}>{placing?"Placing Order...":paymentMethod==="COD"?"Place COD Order":"Continue to Demo Payment"} <ArrowRight size={17}/></button></div></form></div>;
 }
 
 function NotificationsPage({go}){const [items,setItems]=useState([]);useEffect(()=>{(async()=>{try{const d=await apiRequest("/notifications");setItems(d.notifications||[])}catch(e){alert(e.message)}})()},[]);async function read(id){try{await apiRequest(`/notifications/${id}/read`,{method:"PATCH"});setItems(x=>x.map(n=>n.id===id?{...n,isRead:true}:n))}catch(e){alert(e.message)}}return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back</button><div className="cart-header"><h1>Notifications</h1><p>Updates about your FarmBridge activity</p></div><div className="notification-list">{!items.length?<div className="cart-empty"><Bell size={45}/><h2>No notifications</h2></div>:items.map(n=><div className={`notification-item ${n.isRead?"read":""}`} key={n.id}><Bell size={18}/><div><b>{n.title}</b><p>{n.message}</p><small>{new Date(n.createdAt).toLocaleString()}</small></div>{!n.isRead&&<button onClick={()=>read(n.id)}>Mark read</button>}</div>)}</div></div>;
@@ -692,13 +767,27 @@ const farmerMenu = [
 
 function Farmer({lang,setLang,go}) {
   const t=T[lang]; const [view,setView]=useState("dashboard"); const [search,setSearch]=useState("");
+  const [menuOpen,setMenuOpen]=useState(false);
   const [dashboard,setDashboard]=useState(null); const [products,setProducts]=useState([]); const [orders,setOrders]=useState([]); const [deliveries,setDeliveries]=useState([]); const [earnings,setEarnings]=useState(null); const [profile,setProfile]=useState(null); const [notifications,setNotifications]=useState([]);
   const load=async()=>{
     try{const [d,p,o,del,e,pr,n]=await Promise.all([apiRequest("/farmer/dashboard"),apiRequest("/farmer/products"),apiRequest("/orders"),apiRequest("/farmer/deliveries"),apiRequest("/farmer/earnings"),apiRequest("/profile"),apiRequest("/notifications")]);setDashboard(d);setProducts(p.products||[]);setOrders(o.orders||[]);setDeliveries(del.deliveries||[]);setEarnings(e);setProfile(pr.user);setNotifications(n.notifications||[])}catch(err){console.error(err);alert(err.message)}};
   useEffect(()=>{load()},[]);
   const filtered=products.filter(p=>`${p.name||""} ${p.category||""} ${p.location||""}`.toLowerCase().includes(search.toLowerCase()));
   function logout(){localStorage.removeItem("farmbridge_token");localStorage.removeItem("farmbridge_user");go("landing")}
-  return <div className="farmer-app"><aside className="farmer-side"><Logo dark/><div className="farmer-user"><div className="avatar">{(profile?.name||"FR").slice(0,2).toUpperCase()}</div><div><b>{profile?.name||"Farmer"}</b><small>Farmer ✓</small></div><ChevronDown size={15}/></div><div className="side-links">{farmerMenu.map(([key,I])=><button className={view===key?"sel":""} key={key} onClick={()=>setView(key)}><I size={15}/>{t[key]}</button>)}<button onClick={logout}><LogOut size={15}/>{t.logout}</button></div><div className="slogan">Grow Better.<br/>Sell Better.<br/>Live Better.</div></aside><main className="farmer-main"><header className="farmer-top"><button className="hamb"><Menu/></button><div className="search"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder={t.search}/>{search&&<X size={15} onClick={()=>setSearch("")}/>}</div><div className="farmer-actions"><Lang lang={lang} setLang={setLang}/><button className="plain-icon" onClick={()=>setView("notifications")}><Bell/><i>{notifications.filter(n=>!n.isRead).length}</i></button><b>{profile?.name||"Farmer"}⌄</b></div></header><div className="farmer-content"><FarmerPanel view={view} t={t} dashboard={dashboard} products={filtered} allProducts={products} orders={orders} deliveries={deliveries} earnings={earnings} profile={profile} reload={load} setView={setView}/></div><button className="float-back" onClick={()=>go("landing")}><ArrowLeft size={15}/>{t.back}</button></main></div>
+  return <div className="farmer-app">
+    <aside className={`farmer-side ${menuOpen ? "menu-open" : ""}`}>
+      <Logo dark/>
+      <div className="farmer-user"><div className="avatar">{(profile?.name||"FR").slice(0,2).toUpperCase()}</div><div><b>{profile?.name||"Farmer"}</b><small>Farmer ✓</small></div><ChevronDown size={15}/></div>
+      <div className="side-links">{farmerMenu.map(([key,I])=><button className={view===key?"sel":""} key={key} onClick={()=>{setView(key);setMenuOpen(false)}}><I size={15}/>{t[key]}</button>)}<button onClick={logout}><LogOut size={15}/>{t.logout}</button></div>
+      <div className="slogan">Grow Better.<br/>Sell Better.<br/>Live Better.</div>
+    </aside>
+    {menuOpen&&<button className="farmer-nav-backdrop" onClick={()=>setMenuOpen(false)} aria-label="Close navigation"/>}
+    <main className="farmer-main">
+      <header className="farmer-top"><button className="hamb" onClick={()=>setMenuOpen(open=>!open)} aria-label="Toggle navigation"><Menu/></button><div className="search"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder={t.search}/>{search&&<X size={15} onClick={()=>setSearch("")}/>}</div><div className="farmer-actions"><Lang lang={lang} setLang={setLang}/><button className="plain-icon" onClick={()=>setView("notifications")}><Bell/><i>{notifications.filter(n=>!n.isRead).length}</i></button><b>{profile?.name||"Farmer"}⌄</b></div></header>
+      <div className="farmer-content"><FarmerPanel view={view} t={t} dashboard={dashboard} products={filtered} allProducts={products} orders={orders} deliveries={deliveries} earnings={earnings} profile={profile} reload={load} setView={setView}/></div>
+      <button className="float-back" onClick={()=>go("landing")}><ArrowLeft size={15}/>{t.back}</button>
+    </main>
+  </div>
 }
 
 function FarmerPanel({view,t,dashboard,products,allProducts,orders,deliveries,earnings,profile,reload,setView}){
@@ -726,11 +815,11 @@ function FarmerProductsLive({t,products,reload,setView}){async function remove(i
 
 function AddProductLive({t,reload,setView}){const [form,setForm]=useState({name:"",category:"vegetables",description:"",price:"",unit:"kg",stock:"",location:""});const [busy,setBusy]=useState(false);const change=e=>setForm({...form,[e.target.name]:e.target.value});async function submit(e){e.preventDefault();try{setBusy(true);await apiRequest("/products",{method:"POST",body:JSON.stringify({...form,price:Number(form.price),stock:Number(form.stock)})});alert("Product added successfully");await reload();setView("products")}catch(e){alert(e.message)}finally{setBusy(false)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Plus size={15}/>FarmBridge AI</span><h1>{t.addProduct}</h1><p>Add a product to the consumer marketplace.</p></div></div><form className="form-grid" onSubmit={submit}><label>Product Name<input name="name" value={form.name} onChange={change} required placeholder="Tomato"/></label><label>Category<select name="category" value={form.category} onChange={change}><option value="vegetables">vegetables</option><option value="fruits">fruits</option><option value="grains">grains</option><option value="spices">spices</option><option value="dairy">dairy</option><option value="organic">organic</option></select></label><label>Price<input name="price" type="number" value={form.price} onChange={change} required/></label><label>Stock<input name="stock" type="number" value={form.stock} onChange={change} required/></label><label>Unit<input name="unit" value={form.unit} onChange={change}/></label><label>Location<input name="location" value={form.location} onChange={change}/></label><label className="wide">Description<textarea name="description" value={form.description} onChange={change}/></label><button className="submit small-submit" disabled={busy}>{busy?"Saving...":t.addProduct}<Plus size={16}/></button></form></section>}
 
-function FarmerOrdersLive({t,orders,reload}){async function status(id,status){try{await apiRequest(`/orders/${id}/status`,{method:"PATCH",body:JSON.stringify({status})});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><ClipboardList size={15}/>FarmBridge AI</span><h1>{t.myOrders}</h1><p>Customer orders received for your products.</p></div></div><div className="simple-list">{orders.map(o=><div key={o.id}><PackageCheck/><div><b>ORD{String(o.id).padStart(5,"0")} • ₹{o.totalAmount}</b><small>{o.deliveryAddress||"No address"}</small><small>Status: {o.status}</small></div><select value={o.status} onChange={e=>status(o.id,e.target.value)}><option value="placed">placed</option><option value="confirmed">confirmed</option><option value="transport_assigned">transport assigned</option><option value="out_for_delivery">out for delivery</option><option value="delivered">delivered</option><option value="cancelled">cancelled</option></select></div>)}{!orders.length&&<p>No orders yet.</p>}</div></section>}
+function FarmerOrdersLive({t,orders,reload}){async function status(id,status){try{await apiRequest(`/orders/${id}/status`,{method:"PATCH",body:JSON.stringify({status})});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><ClipboardList size={15}/>FarmBridge AI</span><h1>{t.myOrders}</h1><p>Customer orders received for your products.</p></div></div><div className="simple-list">{orders.map(o=><div key={o.id}><PackageCheck/><div><b>ORD{String(o.id).padStart(5,"0")} • ₹{Number(o.totalAmount||0).toFixed(2)}</b><small>{o.deliveryAddress||"No address"}</small><small>Status: {o.status}</small><small className="farmer-payment-detail">Payment: {orderPaymentLabel(o.paymentMethod)} · {o.paymentStatus||"Not recorded"}{o.isDemoPayment?" · DEMO ONLY":""}</small></div><select value={o.status} onChange={e=>status(o.id,e.target.value)}><option value="placed">placed</option><option value="confirmed">confirmed</option><option value="transport_assigned">transport assigned</option><option value="out_for_delivery">out for delivery</option><option value="delivered">delivered</option><option value="cancelled">cancelled</option></select></div>)}{!orders.length&&<p>No orders yet.</p>}</div></section>}
 
 function FarmerDeliveriesLive({t,deliveries}){return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Truck size={15}/>FarmBridge AI</span><h1>{t.deliveries}</h1><p>Assigned, out-for-delivery and completed deliveries.</p></div></div><div className="simple-list">{deliveries.map(o=><div key={o.id}><Truck/><div><b>ORD{String(o.id).padStart(5,"0")}</b><small>{o.fromLocation||"Farm"} → {o.toLocation||"Customer"}</small><small>{o.status}</small></div><span>₹{o.totalAmount}</span></div>)}</div></section>}
 
-function FarmerAILive({t}){const [q,setQ]=useState("");const [answer,setAnswer]=useState("");const [busy,setBusy]=useState(false);async function ask(message=q){if(!message.trim())return;setQ(message);try{setBusy(true);const d=await apiRequest("/ai/farming-assistant",{method:"POST",body:JSON.stringify({message})});setAnswer(d.answer)}catch(e){alert(e.message)}finally{setBusy(false)}}return <section className="detail-view ai-full"><div className="detail-head"><div><span className="eyebrow"><BrainCircuit size={15}/>FarmBridge AI</span><h1>{t.assistant}</h1><p>{t.ask}</p></div></div><div className="ai-prompts">{[t.fertilizer,t.leafSpot,t.soil,t.maize].map(x=><button key={x} onClick={()=>ask(x)}>{x}</button>)}</div><div className="ai-chat"><div className="ai-message user">{q||"Ask a farming question..."}</div>{answer&&<div className="ai-message bot">{answer}</div>}</div><div className="ai-compose"><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&ask()} placeholder={t.question}/><button disabled={busy} onClick={()=>ask()}><ArrowRight/></button></div></section>}
+function FarmerAILive({t}){return <FarmingAssistant t={t}/>}
 
 function PreviousCropLive({t}){const [records,setRecords]=useState([]);const [form,setForm]=useState({cropName:"Tomato",year:new Date().getFullYear()-1,category:"vegetables",season:"",areaAcres:"",yieldAmount:"",averagePrice:"",totalIncome:"",soilType:"Loamy",soilPh:"",notes:""});const [summary,setSummary]=useState(null);async function load(){try{const [r,s]=await Promise.all([apiRequest("/crops/previous-year"),apiRequest("/crops/summary")]);setRecords(r.records||[]);setSummary(s.summary)}catch(e){alert(e.message)}}useEffect(()=>{load()},[]);const ch=e=>setForm({...form,[e.target.name]:e.target.value});async function save(e){e.preventDefault();try{await apiRequest("/crops/previous-year",{method:"POST",body:JSON.stringify({...form,year:Number(form.year)})});alert("Crop record saved");await load()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><History size={15}/>FarmBridge AI</span><h1>{t.previous}</h1><p>Save and review previous-year crop performance.</p></div></div>{summary&&<div className="stats">{[[t.avgYield,summary.averageYield],[t.avgPrice,summary.averagePrice],[t.production,summary.totalProduction],[t.income,summary.totalIncome]].map(x=><div key={x[0]}><small>{x[0]}</small><b>{x[1]}</b><span>From saved records</span></div>)}</div>}<form className="form-grid crop-form" onSubmit={save}><label>Crop<input name="cropName" value={form.cropName} onChange={ch}/></label><label>Year<input name="year" type="number" value={form.year} onChange={ch}/></label><label>Area (acres)<input name="areaAcres" value={form.areaAcres} onChange={ch}/></label><label>Yield<input name="yieldAmount" value={form.yieldAmount} onChange={ch}/></label><label>Average Price<input name="averagePrice" value={form.averagePrice} onChange={ch}/></label><label>Total Income<input name="totalIncome" value={form.totalIncome} onChange={ch}/></label><label>Soil Type<input name="soilType" value={form.soilType} onChange={ch}/></label><label>Soil pH<input name="soilPh" value={form.soilPh} onChange={ch}/></label><label className="wide">Notes<textarea name="notes" value={form.notes} onChange={ch}/></label><button className="submit small-submit">Save Crop Record</button></form><div className="simple-list crop-records">{records.map(r=><div key={r.id}><Leaf/><div><b>{r.cropName} • {r.year}</b><small>{r.areaAcres||0} acres • Yield {r.yieldAmount||0}</small><small>{r.soilType||"Soil not recorded"} • pH {r.soilPh||"-"}</small></div><span>₹{r.totalIncome||0}</span></div>)}</div></section>}
 
@@ -747,5 +836,24 @@ function ProfileLive({t,profile,reload}){const [form,setForm]=useState({name:pro
 function FarmerNotifications({t}){const [items,setItems]=useState([]);useEffect(()=>{apiRequest("/notifications").then(d=>setItems(d.notifications||[])).catch(e=>alert(e.message))},[]);async function read(id){await apiRequest(`/notifications/${id}/read`,{method:"PATCH"});setItems(x=>x.map(n=>n.id===id?{...n,isRead:true}:n))}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Bell size={15}/>FarmBridge AI</span><h1>Notifications</h1></div></div><div className="notification-list">{items.map(n=><div className={`notification-item ${n.isRead?"read":""}`} key={n.id}><Bell/><div><b>{n.title}</b><p>{n.message}</p></div>{!n.isRead&&<button onClick={()=>read(n.id)}>Mark read</button>}</div>)}</div></section>}
 
 
-function App(){ const [page,setPage]=useState("landing"),[lang,setLang]=useState("kn"); const go=p=>setPage(p); const p={lang,setLang,go}; if(page==="landing")return <Landing {...p}/>; if(page==="consumer")return <Consumer {...p}/>; if(page==="consumerLogin")return <Auth role="consumer" mode="login" {...p}/>; if(page==="consumerRegister")return <Auth role="consumer" mode="register" {...p}/>; if(page==="farmerLogin")return <Auth role="farmer" mode="login" {...p}/>; if(page==="farmerRegister")return <Auth role="farmer" mode="register" {...p}/>; if(page==="farmer")return <Farmer {...p}/>; return <Landing {...p}/> }
+function App(){
+  const [page,setPage]=useState("landing"),[lang,setLang]=useState("kn");
+  const go=p=>setPage(p);
+  useEffect(()=>{
+    function returnToLogin(event){
+      setPage(event.detail?.role==="farmer"?"farmerLogin":"consumerLogin");
+    }
+    window.addEventListener("farmbridge:session-expired",returnToLogin);
+    return ()=>window.removeEventListener("farmbridge:session-expired",returnToLogin);
+  },[]);
+  const p={lang,setLang,go};
+  if(page==="landing")return <Landing {...p}/>;
+  if(page==="consumer")return <Consumer {...p}/>;
+  if(page==="consumerLogin")return <Auth role="consumer" mode="login" {...p}/>;
+  if(page==="consumerRegister")return <Auth role="consumer" mode="register" {...p}/>;
+  if(page==="farmerLogin")return <Auth role="farmer" mode="login" {...p}/>;
+  if(page==="farmerRegister")return <Auth role="farmer" mode="register" {...p}/>;
+  if(page==="farmer")return <Farmer {...p}/>;
+  return <Landing {...p}/>;
+}
 createRoot(document.getElementById("root")).render(<App/>);

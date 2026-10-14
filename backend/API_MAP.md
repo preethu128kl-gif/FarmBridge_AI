@@ -26,6 +26,11 @@ Product Buy
 → login first
 → add to cart
 → POST `/api/orders`
+body: `{ "deliveryAddress": "...", "paymentMethod": "COD", "checkoutId": "..." }`
+`paymentMethod` and `checkoutId` are optional for older clients; omitted payment method defaults to COD.
+→ accepted methods: `COD`, `GOOGLE_PAY_DEMO`, `PHONEPE_DEMO`, `PAYTM_DEMO`, `CARD_DEMO`
+→ COD is stored as `PENDING`; successful UPI/card simulations are stored as `PAID_DEMO`
+→ `checkoutId` makes retries idempotent; demo methods never call a payment gateway
 
 Heart
 → POST/DELETE `/api/wishlist`
@@ -75,8 +80,15 @@ AI Assistant
 → POST `/api/ai/farming-assistant`
 body:
 {
-  "message": "How can I improve soil fertility?"
+  "message": "How can I improve soil fertility?",
+  "conversationId": 1
 }
+→ GET `/api/ai/conversations` for the signed-in user's history
+→ GET `/api/ai/conversations/<id>` to load a conversation
+→ DELETE `/api/ai/conversations/<id>` to remove a conversation
+
+Set `GROQ_API_KEY` in `backend/.env` to enable Groq responses. The key is only
+read by Flask; without it, the existing local farming guidance remains available.
 
 Previous Year Data
 → GET `/api/crops/previous-year`

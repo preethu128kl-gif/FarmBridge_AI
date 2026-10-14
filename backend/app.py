@@ -1,4 +1,6 @@
 import os
+import json
+import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -7,7 +9,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity, jwt_required
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import or_, func
+from groq import Groq
+from sqlalchemy import inspect, or_, func
 from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
@@ -64,6 +67,33 @@ class User(db.Model):
     orders_as_farmer = db.relationship(
         "Order", foreign_keys="Order.farmer_id", backref="farmer_user", lazy=True
     )
+
+
+class AIConversation(db.Model):
+    __tablename__ = "ai_conversations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    title = db.Column(db.String(160), nullable=False, default="New conversation")
+    language = db.Column(db.String(60), nullable=False, default="Auto-detected")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    messages = db.relationship(
+        "AIMessage", backref="conversation", cascade="all, delete-orphan",
+        order_by="AIMessage.created_at", lazy=True
+    )
+
+
+class AIMessage(db.Model):
+    __tablename__ = "ai_messages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(
+        db.Integer, db.ForeignKey("ai_conversations.id"), nullable=False, index=True
+    )
+    role = db.Column(db.String(20), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Product(db.Model):
@@ -126,6 +156,9 @@ class Order(db.Model):
     total_amount = db.Column(db.Float, nullable=False, default=0)
     delivery_address = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(40), nullable=False, default="placed")
+    payment_method = db.Column(db.String(40), nullable=True)
+    payment_status = db.Column(db.String(30), nullable=True)
+    checkout_id = db.Column(db.String(80), nullable=True, index=True)
     transport_partner_id = db.Column(
         db.Integer, db.ForeignKey("transport_partners.id"), nullable=True
     )
@@ -268,6 +301,9 @@ def order_dict(o):
         "deliveryAddress": o.delivery_address,
         "status": o.status,
         "statusLabel": STATUS_LABELS.get(o.status, o.status),
+        "paymentMethod": o.payment_method,
+        "paymentStatus": o.payment_status,
+        "isDemoPayment": bool(o.payment_method and o.payment_method.endswith("_DEMO")),
         "transportPartnerId": o.transport_partner_id,
         "transportPartner": o.transport_partner_name,
         "from": o.from_location,
@@ -301,6 +337,77 @@ def order_dict(o):
 def current_user():
     identity = get_jwt_identity()
     return db.session.get(User, int(identity))
+
+
+def ai_message_dict(message):
+    return {
+        "id": message.id,
+        "role": message.role,
+        "content": message.content,
+        "createdAt": message.created_at.isoformat() if message.created_at else None,
+    }
+
+
+def ai_conversation_dict(conversation, include_messages=False):
+    result = {
+        "id": conversation.id,
+        "title": conversation.title,
+        "language": conversation.language,
+        "createdAt": conversation.created_at.isoformat(),
+        "updatedAt": conversation.updated_at.isoformat(),
+    }
+    if include_messages:
+        result["messages"] = [ai_message_dict(message) for message in conversation.messages]
+    return result
+
+
+def detect_message_language(message):
+    scripts = {
+        "Kannada": (0x0C80, 0x0CFF),
+        "Hindi": (0x0900, 0x097F),
+        "Telugu": (0x0C00, 0x0C7F),
+        "Tamil": (0x0B80, 0x0BFF),
+    }
+    counts = {
+        language: sum(start <= ord(char) <= end for char in message)
+        for language, (start, end) in scripts.items()
+    }
+    has_english = any(char.isascii() and char.isalpha() for char in message)
+    if counts["Kannada"] and has_english:
+        return "Kannada-English"
+    for language, count in counts.items():
+        if count:
+            return language
+    return "Auto-detected"
+
+
+def groq_completion(messages):
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    try:
+        result = Groq(api_key=api_key, timeout=45.0, max_retries=1).chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            messages=messages,
+            temperature=0.4,
+            max_tokens=1200,
+            response_format={"type": "json_object"},
+        )
+    except Exception as exc:
+        raise RuntimeError("Groq could not complete the request. Check the backend API configuration and try again.") from exc
+
+    content = result.choices[0].message.content or ""
+    try:
+        parsed = json.loads(content)
+        answer = str(parsed.get("answer", "")).strip()
+        language = str(parsed.get("language", "Auto-detected")).strip()
+    except (TypeError, ValueError):
+        answer = str(content).strip()
+        language = "Auto-detected"
+    if not answer:
+        raise RuntimeError("Groq returned an empty response. Please try again.")
+    return answer, language or "Auto-detected"
 
 
 def role_required(*roles):
@@ -821,14 +928,47 @@ def remove_wishlist(product_id):
 def create_order():
     data = request.get_json(silent=True) or {}
     address = (data.get("deliveryAddress") or "").strip()
+    raw_payment_method = data.get("paymentMethod") or "COD"
+    if not isinstance(raw_payment_method, str):
+        return jsonify({"error": "Invalid payment method"}), 400
+    payment_method = raw_payment_method.strip().upper()
+    raw_checkout_id = data.get("checkoutId") or request.headers.get("Idempotency-Key")
+    checkout_id = str(raw_checkout_id).strip() if raw_checkout_id else uuid.uuid4().hex
 
     if not address:
         return jsonify({"error": "deliveryAddress is required"}), 400
+    allowed_payment_methods = {
+        "COD", "GOOGLE_PAY_DEMO", "PHONEPE_DEMO", "PAYTM_DEMO", "CARD_DEMO"
+    }
+    if payment_method not in allowed_payment_methods:
+        return jsonify({"error": "Invalid payment method"}), 400
+    if len(checkout_id) > 80:
+        return jsonify({"error": "checkoutId must be 80 characters or fewer"}), 400
+
+    user_id = current_user().id
+    existing_orders = Order.query.filter_by(
+        consumer_id=user_id, checkout_id=checkout_id
+    ).order_by(Order.id.asc()).all()
+    if existing_orders:
+        return jsonify({
+            "message": "This checkout was already processed",
+            "orders": [order_dict(order) for order in existing_orders],
+            "idempotentReplay": True,
+        }), 200
 
     cart_items = CartItem.query.filter_by(
-        consumer_id=current_user().id
-    ).all()
+        consumer_id=user_id
+    ).with_for_update().all()
     if not cart_items:
+        existing_orders = Order.query.filter_by(
+            consumer_id=user_id, checkout_id=checkout_id
+        ).order_by(Order.id.asc()).all()
+        if existing_orders:
+            return jsonify({
+                "message": "This checkout was already processed",
+                "orders": [order_dict(order) for order in existing_orders],
+                "idempotentReplay": True,
+            }), 200
         return jsonify({"error": "Cart is empty"}), 400
 
     # One order is created per farmer so farmer dashboards remain clean.
@@ -842,11 +982,14 @@ def create_order():
         for farmer_id, items in groups.items():
             farmer = db.session.get(User, farmer_id)
             order = Order(
-                consumer_id=current_user().id,
+                consumer_id=user_id,
                 farmer_id=farmer_id,
                 total_amount=0,
                 delivery_address=address,
                 status="placed",
+                payment_method=payment_method,
+                payment_status="PENDING" if payment_method == "COD" else "PAID_DEMO",
+                checkout_id=checkout_id,
                 from_location=farmer.location if farmer else None,
                 to_location=current_user().location,
             )
@@ -1173,6 +1316,40 @@ def fertility_info():
 # FARMING AI ASSISTANT
 # ============================================================
 
+@app.get("/api/ai/conversations")
+@jwt_required()
+def ai_conversations():
+    user = current_user()
+    if not user:
+        return jsonify({"error": "User not found"}), 401
+    conversations = AIConversation.query.filter_by(user_id=user.id).order_by(
+        AIConversation.updated_at.desc()
+    ).all()
+    return jsonify({"conversations": [ai_conversation_dict(item) for item in conversations]})
+
+
+@app.get("/api/ai/conversations/<int:conversation_id>")
+@jwt_required()
+def get_ai_conversation(conversation_id):
+    user = current_user()
+    conversation = db.session.get(AIConversation, conversation_id)
+    if not user or not conversation or conversation.user_id != user.id:
+        return jsonify({"error": "Conversation not found"}), 404
+    return jsonify({"conversation": ai_conversation_dict(conversation, include_messages=True)})
+
+
+@app.delete("/api/ai/conversations/<int:conversation_id>")
+@jwt_required()
+def delete_ai_conversation(conversation_id):
+    user = current_user()
+    conversation = db.session.get(AIConversation, conversation_id)
+    if not user or not conversation or conversation.user_id != user.id:
+        return jsonify({"error": "Conversation not found"}), 404
+    db.session.delete(conversation)
+    db.session.commit()
+    return jsonify({"message": "Conversation deleted"})
+
+
 @app.post("/api/ai/farming-assistant")
 @jwt_required()
 def farming_assistant():
@@ -1181,59 +1358,146 @@ def farming_assistant():
 
     if not message:
         return jsonify({"error": "message is required"}), 400
+    if len(message) > 5000:
+        return jsonify({"error": "message must be 5000 characters or fewer"}), 400
 
-    q = message.lower()
+    user = current_user()
+    if not user:
+        return jsonify({"error": "User not found"}), 401
 
-    if any(x in q for x in ["fertility", "soil", "fertilizer", "ಗೊಬ್ಬರ", "ಮಣ್ಣು"]):
-        answer = (
-            "For soil fertility, start with a soil test for pH and nutrients. "
-            "Add suitable organic matter and use fertilizer according to the crop "
-            "and soil-test recommendation instead of guessing a dose."
+    conversation_id = data.get("conversationId")
+    conversation = None
+    if conversation_id is not None:
+        try:
+            conversation_id = int(conversation_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "conversationId must be an integer"}), 400
+        conversation = db.session.get(AIConversation, conversation_id)
+        if not conversation or conversation.user_id != user.id:
+            return jsonify({"error": "Conversation not found"}), 404
+
+    language_hint = detect_message_language(message)
+    if language_hint == "Kannada-English":
+        language_instruction = (
+            "This message is mixed Kannada-English. Answer in a natural Kannada-English mix, using Kannada script "
+            "for Kannada phrases and English for the English terms. Do not answer in English only. Set the language "
+            "field to 'Kannada-English'."
         )
-        topic = "soil_fertility"
-    elif any(x in q for x in ["water", "irrigation", "ನೀರು"]):
-        answer = (
-            "Irrigation depends on crop, soil and weather. Check soil moisture, "
-            "avoid waterlogging and use efficient irrigation where practical."
+    elif language_hint != "Auto-detected":
+        language_instruction = (
+            f"The latest message is written in {language_hint}. Reply fully in {language_hint}, and set the language "
+            f"field to '{language_hint}'."
         )
-        topic = "irrigation"
-    elif any(x in q for x in ["pest", "insect", "disease", "ಕೀಟ", "ರೋಗ"]):
-        answer = (
-            "Identify the pest or disease first. Prefer integrated pest management "
-            "and use only approved crop-protection products at the recommended dose."
-        )
-        topic = "pest_disease"
-    elif any(x in q for x in ["tomato", "ಟೊಮ್ಯಾಟೊ"]):
-        answer = (
-            "For tomatoes, focus on balanced nutrition, good drainage, regular "
-            "monitoring for leaf diseases and timely irrigation. Fertilizer quantity "
-            "should be based on crop stage and soil-test results."
-        )
-        topic = "tomato"
-    elif any(x in q for x in ["chilli", "ಚಿಲ್ಲಿ", "ಮೆಣಸಿನ"]):
-        answer = (
-            "For chilli, monitor leaf spots, sucking pests and moisture stress. "
-            "Remove severely affected material and use locally approved management "
-            "recommendations when needed."
-        )
-        topic = "chilli"
-    elif any(x in q for x in ["maize", "ಮೆಕ್ಕೆಜೋಳ"]):
-        answer = (
-            "Maize sowing time depends on your local season and rainfall. Choose "
-            "a locally recommended variety and ensure adequate soil moisture at sowing."
-        )
-        topic = "maize"
     else:
-        answer = (
-            "I can help with crops, soil fertility, irrigation, pests, diseases, "
-            "fertilizer basics and previous-year crop data. Tell me the crop and "
-            "the problem you are seeing."
+        language_instruction = (
+            "Identify whether the latest message is in Kannada, English, Hindi, Telugu, or Tamil, and reply in that "
+            "same language. If it is Kannada-English code-mixed, preserve that natural mix."
         )
-        topic = "general"
+
+    prompt = [
+        {
+            "role": "system",
+            "content": (
+                "You are FarmBridge AI, a practical farming assistant. " + language_instruction + " "
+                "Use prior messages to understand follow-ups, but match the language of the latest question. "
+                "Return only a JSON object with string keys 'language' and 'answer'. "
+                "Give clear, cautious agricultural guidance; do not invent local conditions or prescribe chemical doses. "
+                "Recommend a local agronomist or soil test when a reliable recommendation depends on them."
+            ),
+        }
+    ]
+    if conversation:
+        previous_messages = AIMessage.query.filter_by(
+            conversation_id=conversation.id
+        ).order_by(AIMessage.created_at.desc()).limit(16).all()
+        prompt.extend(
+            {"role": item.role, "content": item.content}
+            for item in reversed(previous_messages)
+        )
+    prompt.append({"role": "user", "content": message})
+
+    provider = "groq" if os.getenv("GROQ_API_KEY", "").strip() else "local"
+    if provider == "groq":
+        try:
+            answer, language = groq_completion(prompt)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 502
+        if language_hint != "Auto-detected":
+            language = language_hint
+        topic = "farming"
+    else:
+        q = message.lower()
+
+        if any(x in q for x in ["fertility", "soil", "fertilizer", "ಗೊಬ್ಬರ", "ಮಣ್ಣು"]):
+            answer = (
+                "For soil fertility, start with a soil test for pH and nutrients. "
+                "Add suitable organic matter and use fertilizer according to the crop "
+                "and soil-test recommendation instead of guessing a dose."
+            )
+            topic = "soil_fertility"
+        elif any(x in q for x in ["water", "irrigation", "ನೀರು"]):
+            answer = (
+                "Irrigation depends on crop, soil and weather. Check soil moisture, "
+                "avoid waterlogging and use efficient irrigation where practical."
+            )
+            topic = "irrigation"
+        elif any(x in q for x in ["pest", "insect", "disease", "ಕೀಟ", "ರೋಗ"]):
+            answer = (
+                "Identify the pest or disease first. Prefer integrated pest management "
+                "and use only approved crop-protection products at the recommended dose."
+            )
+            topic = "pest_disease"
+        elif any(x in q for x in ["tomato", "ಟೊಮ್ಯಾಟೊ"]):
+            answer = (
+                "For tomatoes, focus on balanced nutrition, good drainage, regular "
+                "monitoring for leaf diseases and timely irrigation. Fertilizer quantity "
+                "should be based on crop stage and soil-test results."
+            )
+            topic = "tomato"
+        elif any(x in q for x in ["chilli", "ಚಿಲ್ಲಿ", "ಮೆಣಸಿನ"]):
+            answer = (
+                "For chilli, monitor leaf spots, sucking pests and moisture stress. "
+                "Remove severely affected material and use locally approved management "
+                "recommendations when needed."
+            )
+            topic = "chilli"
+        elif any(x in q for x in ["maize", "ಮೆಕ್ಕೆಜೋಳ"]):
+            answer = (
+                "Maize sowing time depends on your local season and rainfall. Choose "
+                "a locally recommended variety and ensure adequate soil moisture at sowing."
+            )
+            topic = "maize"
+        else:
+            answer = (
+                "I can help with crops, soil fertility, irrigation, pests, diseases, "
+                "fertilizer basics and previous-year crop data. Tell me the crop and "
+                "the problem you are seeing."
+            )
+            topic = "general"
+        language = "English"
+
+    if not conversation:
+        conversation = AIConversation(
+            user_id=user.id,
+            title=message[:160],
+            language=language,
+        )
+        db.session.add(conversation)
+    else:
+        conversation.language = language
+        conversation.updated_at = datetime.utcnow()
+    db.session.add_all([
+        AIMessage(conversation=conversation, role="user", content=message),
+        AIMessage(conversation=conversation, role="assistant", content=answer),
+    ])
+    db.session.commit()
 
     return jsonify({
         "answer": answer,
         "topic": topic,
+        "language": language,
+        "provider": provider,
+        "conversation": ai_conversation_dict(conversation),
         "disclaimer": "This is general agricultural guidance, not a substitute for local soil-test or agronomist advice."
     })
 
@@ -1536,8 +1800,27 @@ def server_error(_):
     return jsonify({"error": "Internal server error"}), 500
 
 
+def ensure_order_payment_columns():
+    columns = {column["name"] for column in inspect(db.engine).get_columns("orders")}
+    additions = {
+        "payment_method": "VARCHAR(40)",
+        "payment_status": "VARCHAR(30)",
+        "checkout_id": "VARCHAR(80)",
+    }
+    with db.engine.begin() as connection:
+        for name, sql_type in additions.items():
+            if name not in columns:
+                connection.execute(db.text(
+                    f"ALTER TABLE orders ADD COLUMN {name} {sql_type}"
+                ))
+        connection.execute(db.text(
+            "CREATE INDEX IF NOT EXISTS ix_orders_checkout_id ON orders (checkout_id)"
+        ))
+
+
 with app.app_context():
     db.create_all()
+    ensure_order_payment_columns()
     seed_demo()
 
 

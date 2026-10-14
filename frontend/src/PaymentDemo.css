@@ -1,0 +1,225 @@
+.payment-method-list {
+  display: grid;
+  gap: 8px;
+}
+
+.payment-method-option {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e0e8df;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.payment-method-option:hover,
+.payment-method-option.selected {
+  border-color: #88b38b;
+  background: #f4f9f2;
+}
+
+.payment-method-option input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: #16813d;
+}
+
+.payment-method-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+
+.payment-method-copy b {
+  color: #25372b;
+  font-size: 12px;
+}
+
+.payment-method-copy small {
+  color: #768279;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.payment-method-badge,
+.payment-demo-tag {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .4px;
+}
+
+.payment-method-badge.cod {
+  background: #edf5e9;
+  color: #397348;
+}
+
+.payment-method-badge.demo,
+.payment-demo-tag {
+  background: #fff3d8;
+  color: #8a641a;
+}
+
+.payment-demo-disclaimer {
+  margin: 12px 0 0;
+  color: #778279;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.checkout-error {
+  margin-top: 12px;
+  border: 1px solid #efd0c8;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fff6f2;
+  color: #9c442f;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.payment-demo-panel,
+.payment-result {
+  max-width: 680px;
+  margin: 24px auto;
+  border: 1px solid #dfe8df;
+  border-radius: 10px;
+  padding: 24px;
+  background: #fff;
+  box-shadow: 0 12px 35px rgba(25, 62, 37, .08);
+}
+
+.payment-demo-panel {
+  display: grid;
+  gap: 20px;
+}
+
+.payment-demo-method,
+.payment-demo-total {
+  display: grid;
+  gap: 7px;
+}
+
+.payment-demo-method small,
+.payment-demo-total small {
+  color: #78847a;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .7px;
+}
+
+.payment-demo-method strong {
+  color: #25372b;
+  font: 800 22px Manrope, sans-serif;
+}
+
+.payment-demo-method span {
+  color: #8a641a;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.payment-demo-total {
+  border-top: 1px solid #e7ede6;
+  border-bottom: 1px solid #e7ede6;
+  padding: 17px 0;
+}
+
+.payment-demo-total strong {
+  color: #17683b;
+  font: 800 30px Manrope, sans-serif;
+}
+
+.payment-demo-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+
+.payment-demo-actions button {
+  justify-content: center;
+  margin: 0;
+}
+
+.payment-demo-actions .continue-shopping {
+  border: 1px solid #d9e4d8;
+}
+
+.payment-result {
+  text-align: center;
+}
+
+.payment-result h1 {
+  margin: 15px 0 8px;
+  color: #1d3023;
+  font: 800 24px/1.3 Manrope, sans-serif;
+}
+
+.payment-result>p {
+  color: #69776d;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.payment-result-total,
+.payment-result-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid #e7ede6;
+  padding: 14px 0;
+  color: #69776d;
+  font-size: 11px;
+  text-align: left;
+}
+
+.payment-result-total strong {
+  color: #17683b;
+  font: 800 22px Manrope, sans-serif;
+}
+
+.payment-result-meta span:last-child {
+  color: #397348;
+  font-weight: 800;
+}
+
+.payment-result .checkout {
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.order-payment-detail,
+.farmer-payment-detail {
+  display: block;
+  margin-top: 5px;
+  color: #53665a;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.farmer-payment-detail {
+  color: #286b3d;
+  font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .payment-method-option { gap: 8px; padding: 10px 8px; }
+  .payment-method-copy b { font-size: 11px; }
+  .payment-method-copy small { font-size: 9px; }
+  .payment-method-badge { padding: 4px 5px; font-size: 7px; }
+  .payment-demo-panel,
+  .payment-result { margin: 16px 0; padding: 18px 14px; }
+  .payment-demo-actions { grid-template-columns: 1fr; }
+  .payment-result h1 { font-size: 20px; }
+}
