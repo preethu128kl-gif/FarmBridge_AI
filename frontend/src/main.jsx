@@ -21,14 +21,78 @@ import onion from "./assets/onion.jpg";
 import carrot from "./assets/carrot.jpg";
 import cabbage from "./assets/cabbage.jpg";
 import farmerHero from "./assets/farmer-hero.jpg";
-import farmerTomato from "./assets/farmer-tomato.jpg";
-import farmerBrinjal from "./assets/farmer-brinjal.jpg";
-import farmerChilli from "./assets/farmer-chilli.jpg";
-import farmerCarrot from "./assets/farmer-carrot.jpg";
-import farmerPotato from "./assets/farmer-potato.jpg";
-import farmerOnion from "./assets/farmer-onion.jpg";
 import consumerLoginHero from "./assets/consumer-login-hero.jpg";
 import farmerLoginHero from "./assets/farmer-login-hero.jpg";
+
+const productImageFiles = import.meta.glob("../product-images/*.jpg", {
+  eager: true,
+  query: "?url",
+  import: "default"
+});
+const productImageSources = Object.fromEntries(
+  Object.entries(productImageFiles).map(([path, url]) => {
+    const fileName = path.split("/").pop().replace(/\.jpg$/i, "");
+    return [normalizeProductName(fileName), url];
+  })
+);
+const productImages = Object.fromEntries(
+  Object.entries(productImageSources).filter(([name]) => !/\s\(\d+\)$/.test(name))
+);
+productImages.turmeric = productImageSources["turmeric (2)"];
+productImages.sunflower = productImageSources["sunflower (2)"];
+const productImageAliases = {
+  "bell pepper": "capsicum",
+  eggplant: "brinjal",
+  "green chili": "green chilli",
+  tomatoes: "tomato"
+};
+const productImagePlaceholder = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#f4f7f2"/><path d="M256 367c-39-63-38-137 4-211 42 74 43 148 4 211m-5-48c-42-44-91-58-147-43 38 57 87 74 147 56m10-13c40-42 88-56 143-41-37 55-84 71-143 54" fill="none" stroke="#82a779" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)}`;
+
+function normalizeProductName(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function productImage(product) {
+  const savedImage =
+    product && typeof product === "object"
+      ? product.image_url || product.image
+      : "";
+  if (savedImage) return savedImage;
+
+  const name = normalizeProductName(
+    typeof product === "string" ? product : product?.name
+  );
+  return productImages[productImageAliases[name] || name] || productImagePlaceholder;
+}
+
+function ProductImage({ product, alt, className }) {
+  const image = productImage(product);
+  const localImage = productImage(
+    typeof product === "string" ? product : { name: product?.name }
+  );
+  const [failedSource, setFailedSource] = useState("");
+  useEffect(() => setFailedSource(""), [image, localImage]);
+  const src = !failedSource
+    ? image
+    : failedSource === image && image !== localImage
+      ? localImage
+      : productImagePlaceholder;
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      onError={() => setFailedSource(src)}
+    />
+  );
+}
 
 const T = {
   kn: {
@@ -230,27 +294,10 @@ function Product({p,t,onCart,onBuy,liked,onWishlist,onOpen}) {
   const price = p.price ?? 0;
   const stock = p.stock ?? 0;
 
-  const imageMap = {
-    tomato,
-    potato,
-    onion,
-    carrot,
-    cabbage,
-    "green chilli": farmerChilli,
-    brinjal: farmerBrinjal,
-    mango: tomato
-  };
-
-  const image =
-    p.image_url ||
-    p.image ||
-    imageMap[name.toLowerCase()] ||
-    tomato;
-
   return (
     <div className="product" onClick={onOpen}>
       <div className="pic">
-        <img src={image} alt={name} />
+        <ProductImage product={p} alt={name} />
 
         <button
           className={`wishlist-btn ${liked ? "liked" : ""}`}
@@ -436,9 +483,7 @@ function ConsumerProfile({ go, onLogout }) {
 function ProductDetails({product,go,addToCart,buyNow,liked,onWishlist}) {
   const [qty,setQty]=useState(1);
   const name=product.name||"Product"; const price=Number(product.price||0);
-  const imageMap={tomato,potato,onion,carrot,cabbage,"green chilli":farmerChilli,brinjal:farmerBrinjal,mango:tomato};
-  const image=product.image_url||product.image||imageMap[name.toLowerCase()]||tomato;
-  return <div className="product-detail-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back</button><div className="detail-product-card"><div className="detail-product-image"><img src={image} alt={name}/></div><div className="detail-product-info"><div className="detail-breadcrumb">Home / {product.category || "Products"} / {name}</div><h1>{name}</h1><p className="detail-farmer">By {product.farmerName||product.farmer_name||"Farmer"} ✓</p><div className="detail-price">₹{price} <small>/ {product.unit||"kg"}</small></div><p>{product.description||"Fresh farm product supplied directly by a trusted farmer."}</p><div className="stock-badge">● {Number(product.stock||0)>0?"In Stock":"Out of Stock"}</div><div className="detail-qty"><b>Quantity</b><button onClick={()=>setQty(Math.max(1,qty-1))}>−</button><span>{qty}</span><button onClick={()=>setQty(qty+1)}>+</button></div><div className="detail-actions"><button onClick={()=>addToCart({...product},qty)}><ShoppingCart size={16}/> Add to Cart</button><button className="buy" onClick={()=>buyNow(product,qty)}>Buy Now</button><button className={`wishlist-detail ${liked?"liked":""}`} onClick={onWishlist}><Heart fill={liked?"currentColor":"none"}/></button></div><div className="detail-features"><span>✓ Direct from Farm</span><span>✓ Fresh & Natural</span><span>✓ Secure Delivery</span></div></div></div><div className="box detail-information"><h2>Product Information</h2><p>{product.description||"Farm fresh quality product. Carefully handled and supplied directly from the farmer."}</p></div></div>;
+  return <div className="product-detail-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back</button><div className="detail-product-card"><div className="detail-product-image"><ProductImage product={product} alt={name}/></div><div className="detail-product-info"><div className="detail-breadcrumb">Home / {product.category || "Products"} / {name}</div><h1>{name}</h1><p className="detail-farmer">By {product.farmerName||product.farmer_name||"Farmer"} ✓</p><div className="detail-price">₹{price} <small>/ {product.unit||"kg"}</small></div><p>{product.description||"Fresh farm product supplied directly by a trusted farmer."}</p><div className="stock-badge">● {Number(product.stock||0)>0?"In Stock":"Out of Stock"}</div><div className="detail-qty"><b>Quantity</b><button onClick={()=>setQty(Math.max(1,qty-1))}>−</button><span>{qty}</span><button onClick={()=>setQty(qty+1)}>+</button></div><div className="detail-actions"><button onClick={()=>addToCart({...product},qty)}><ShoppingCart size={16}/> Add to Cart</button><button className="buy" onClick={()=>buyNow(product,qty)}>Buy Now</button><button className={`wishlist-detail ${liked?"liked":""}`} onClick={onWishlist}><Heart fill={liked?"currentColor":"none"}/></button></div><div className="detail-features"><span>✓ Direct from Farm</span><span>✓ Fresh & Natural</span><span>✓ Secure Delivery</span></div></div></div><div className="box detail-information"><h2>Product Information</h2><p>{product.description||"Farm fresh quality product. Carefully handled and supplied directly from the farmer."}</p></div></div>;
 }
 
 function CartView({cart,setCart,go,loadCart,onCheckout}) {
@@ -446,12 +491,12 @@ function CartView({cart,setCart,go,loadCart,onCheckout}) {
   async function changeQuantity(item,quantity){if(quantity<1)return;try{setLoading(true);await apiRequest(`/cart/${item.id}`,{method:"PATCH",body:JSON.stringify({quantity})});await loadCart();}catch(e){alert(e.message)}finally{setLoading(false)}}
   async function removeItem(id){try{await apiRequest(`/cart/${id}`,{method:"DELETE"});await loadCart()}catch(e){alert(e.message)}}
   const total=cart.reduce((sum,item)=>sum+Number(item.product?.price||item.price||0)*Number(item.quantity||1),0);
-  return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back to Shopping</button><div className="cart-header"><div><h1>My Cart</h1><p>{cart.length} item(s) in your cart</p></div></div>{!cart.length?<div className="cart-empty"><ShoppingCart size={58}/><h2>Your Cart is Empty</h2><p>Add fresh products directly from farmers.</p><button onClick={go}>Continue Shopping <ArrowRight size={17}/></button></div>:<div className="cart-layout"><div className="cart-items">{cart.map(item=>{const product=item.product||item;const name=product.name||"Product";const price=Number(product.price||item.price||0);const imageMap={tomato,potato,onion,carrot,cabbage,"green chilli":farmerChilli,brinjal:farmerBrinjal,mango:tomato};const image=product.image_url||product.image||imageMap[name.toLowerCase()]||tomato;return <div className="cart-item" key={item.id}><img src={image} alt={name}/><div className="cart-item-info"><h3>{name}</h3><small>By {product.farmerName||product.farmer_name||"Farmer"}</small><strong>₹{price}</strong><div className="quantity"><button disabled={loading} onClick={()=>changeQuantity(item,Number(item.quantity)-1)}>−</button><span>{item.quantity}</span><button disabled={loading} onClick={()=>changeQuantity(item,Number(item.quantity)+1)}>+</button></div></div><button className="remove-cart" onClick={()=>removeItem(item.id)}>Remove</button></div>})}</div><div className="cart-summary"><h2>Order Summary</h2><div><span>Subtotal</span><b>₹{total.toFixed(2)}</b></div><div><span>Delivery</span><b>FREE</b></div><hr/><div className="grand-total"><span>Total</span><strong>₹{total.toFixed(2)}</strong></div><button className="checkout" onClick={onCheckout}>Proceed to Checkout <ArrowRight size={17}/></button><button className="continue-shopping" onClick={go}>Continue Shopping</button></div></div>}</div>;
+  return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back to Shopping</button><div className="cart-header"><div><h1>My Cart</h1><p>{cart.length} item(s) in your cart</p></div></div>{!cart.length?<div className="cart-empty"><ShoppingCart size={58}/><h2>Your Cart is Empty</h2><p>Add fresh products directly from farmers.</p><button onClick={go}>Continue Shopping <ArrowRight size={17}/></button></div>:<div className="cart-layout"><div className="cart-items">{cart.map(item=>{const product=item.product||item;const name=product.name||"Product";const price=Number(product.price||item.price||0);return <div className="cart-item" key={item.id}><ProductImage product={product} alt={name}/><div className="cart-item-info"><h3>{name}</h3><small>By {product.farmerName||product.farmer_name||"Farmer"}</small><strong>₹{price}</strong><div className="quantity"><button disabled={loading} onClick={()=>changeQuantity(item,Number(item.quantity)-1)}>−</button><span>{item.quantity}</span><button disabled={loading} onClick={()=>changeQuantity(item,Number(item.quantity)+1)}>+</button></div></div><button className="remove-cart" onClick={()=>removeItem(item.id)}>Remove</button></div>})}</div><div className="cart-summary"><h2>Order Summary</h2><div><span>Subtotal</span><b>₹{total.toFixed(2)}</b></div><div><span>Delivery</span><b>FREE</b></div><hr/><div className="grand-total"><span>Total</span><strong>₹{total.toFixed(2)}</strong></div><button className="checkout" onClick={onCheckout}>Proceed to Checkout <ArrowRight size={17}/></button><button className="continue-shopping" onClick={go}>Continue Shopping</button></div></div>}</div>;
 }
 
 function WishlistView({wishlist,products,go,loadWishlist,addToCart,openProduct}) {
   async function removeItem(wish){try{const productId=wish.product?.id??wish.productId??wish.product_id;await apiRequest(`/wishlist/${productId}`,{method:"DELETE"});await loadWishlist()}catch(e){alert(e.message)}}
-  return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back to Shopping</button><div className="cart-header"><div><h1>My Wishlist</h1><p>{wishlist.length} saved item(s)</p></div></div>{!wishlist.length?<div className="cart-empty"><Heart size={58}/><h2>Your Wishlist is Empty</h2><p>Save products you want to buy later.</p><button onClick={go}>Continue Shopping <ArrowRight size={17}/></button></div>:<div className="wishlist-grid">{wishlist.map((wish,index)=>{const product=wish.product||products.find(p=>Number(p.id)===Number(wish.productId));const name=product?.name||"Product";const price=Number(product?.price||0);const imageMap={tomato,potato,onion,carrot,cabbage,"green chilli":farmerChilli,brinjal:farmerBrinjal,mango:tomato};const image=product?.image_url||product?.image||imageMap[name.toLowerCase()]||tomato;return <div className="wishlist-card" key={wish.id||index}><div className="wishlist-image"><img src={image} alt={name}/><Heart fill="currentColor"/></div><h3>{name}</h3><small>By {product?.farmerName||product?.farmer_name||"Farmer"}</small><strong>₹{price}</strong><div className="wishlist-actions"><button onClick={()=>openProduct(product)}><Eye size={14}/> View</button><button onClick={()=>addToCart(product)}><ShoppingCart size={14}/> Add to Cart</button><button onClick={()=>removeItem(wish)}><X size={14}/> Remove</button></div></div>})}</div>}</div>;
+  return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back to Shopping</button><div className="cart-header"><div><h1>My Wishlist</h1><p>{wishlist.length} saved item(s)</p></div></div>{!wishlist.length?<div className="cart-empty"><Heart size={58}/><h2>Your Wishlist is Empty</h2><p>Save products you want to buy later.</p><button onClick={go}>Continue Shopping <ArrowRight size={17}/></button></div>:<div className="wishlist-grid">{wishlist.map((wish,index)=>{const product=wish.product||products.find(p=>Number(p.id)===Number(wish.productId));const name=product?.name||"Product";const price=Number(product?.price||0);return <div className="wishlist-card" key={wish.id||index}><div className="wishlist-image"><ProductImage product={product} alt={name}/><Heart fill="currentColor"/></div><h3>{name}</h3><small>By {product?.farmerName||product?.farmer_name||"Farmer"}</small><strong>₹{price}</strong><div className="wishlist-actions"><button onClick={()=>openProduct(product)}><Eye size={14}/> View</button><button onClick={()=>addToCart(product)}><ShoppingCart size={14}/> Add to Cart</button><button onClick={()=>removeItem(wish)}><X size={14}/> Remove</button></div></div>})}</div>}</div>;
 }
 
 function OrdersPage({go}) {
@@ -807,11 +852,9 @@ function FarmerPanel({view,t,dashboard,products,allProducts,orders,deliveries,ea
   return null;
 }
 
-function FarmerDashboardLive({t,dashboard,products,setView}){const stats=dashboard?.stats||{};return <><section className="farmer-hero" style={{backgroundImage:`url(${farmerHero})`}}><div><h1><span>Fresh Produce</span><br/>Directly from Farmers<br/><span>to Your Home</span></h1><p>Good for you. Good for farmers.</p><button onClick={()=>setView("products")}>{t.products} <ArrowRight size={15}/></button></div></section><div className="farmer-stat-grid">{[["Products",stats.products??0,Boxes],["Orders",stats.orders??0,ClipboardList],["Pending Orders",stats.pendingOrders??0,History],["Delivered",stats.deliveries??0,PackageCheck],["Earnings",`₹${Number(stats.earnings||0).toFixed(2)}`,CircleDollarSign]].map(([a,b,I])=><div key={a}><I/><small>{a}</small><strong>{b}</strong></div>)}</div><div className="farmer-grid"><section className="box"><div className="title"><h2>{t.available}</h2><a onClick={()=>setView("products")}>{t.viewAll}</a></div><div className="farmer-products">{products.slice(0,6).map(p=><div key={p.id}><img src={productImage(p)}/><b>{p.name}</b><small>{p.location||"Farm"}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>setView("products")}>Manage</button></div>)}</div></section><CropLive t={t}/></div></>}
+function FarmerDashboardLive({t,dashboard,products,setView}){const stats=dashboard?.stats||{};return <><section className="farmer-hero" style={{backgroundImage:`url(${farmerHero})`}}><div><h1><span>Fresh Produce</span><br/>Directly from Farmers<br/><span>to Your Home</span></h1><p>Good for you. Good for farmers.</p><button onClick={()=>setView("products")}>{t.products} <ArrowRight size={15}/></button></div></section><div className="farmer-stat-grid">{[["Products",stats.products??0,Boxes],["Orders",stats.orders??0,ClipboardList],["Pending Orders",stats.pendingOrders??0,History],["Delivered",stats.deliveries??0,PackageCheck],["Earnings",`₹${Number(stats.earnings||0).toFixed(2)}`,CircleDollarSign]].map(([a,b,I])=><div key={a}><I/><small>{a}</small><strong>{b}</strong></div>)}</div><div className="farmer-grid"><section className="box"><div className="title"><h2>{t.available}</h2><a onClick={()=>setView("products")}>{t.viewAll}</a></div><div className="farmer-products">{products.slice(0,6).map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.location||"Farm"}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>setView("products")}>Manage</button></div>)}</div></section><CropLive t={t}/></div></>}
 
-function productImage(p){const name=(p?.name||"").toLowerCase();const map={tomato:tomato,potato:potato,onion:onion,carrot:carrot,cabbage:cabbage,"green chilli":farmerChilli,brinjal:farmerBrinjal,mango:tomato};return p?.image_url||p?.image||map[name]||farmerTomato}
-
-function FarmerProductsLive({t,products,reload,setView}){async function remove(id){if(!confirm("Remove this product?"))return;try{await apiRequest(`/products/${id}`,{method:"DELETE"});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><button onClick={()=>setView("dashboard")}><ArrowLeft size={16}/>{t.back}</button><div><span className="eyebrow"><Leaf size={15}/>FarmBridge AI</span><h1>{t.products}</h1><p>Manage your active products, stock and prices.</p></div></div><div className="farmer-products large">{products.map(p=><div key={p.id}><img src={productImage(p)}/><b>{p.name}</b><small>{p.category} • {p.location||""}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>remove(p.id)}>Remove</button></div>)}{!products.length&&<div className="empty">No products found.</div>}</div></section>}
+function FarmerProductsLive({t,products,reload,setView}){async function remove(id){if(!confirm("Remove this product?"))return;try{await apiRequest(`/products/${id}`,{method:"DELETE"});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><button onClick={()=>setView("dashboard")}><ArrowLeft size={16}/>{t.back}</button><div><span className="eyebrow"><Leaf size={15}/>FarmBridge AI</span><h1>{t.products}</h1><p>Manage your active products, stock and prices.</p></div></div><div className="farmer-products large">{products.map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.category} • {p.location||""}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>remove(p.id)}>Remove</button></div>)}{!products.length&&<div className="empty">No products found.</div>}</div></section>}
 
 function AddProductLive({t,reload,setView}){const [form,setForm]=useState({name:"",category:"vegetables",description:"",price:"",unit:"kg",stock:"",location:""});const [busy,setBusy]=useState(false);const change=e=>setForm({...form,[e.target.name]:e.target.value});async function submit(e){e.preventDefault();try{setBusy(true);await apiRequest("/products",{method:"POST",body:JSON.stringify({...form,price:Number(form.price),stock:Number(form.stock)})});alert("Product added successfully");await reload();setView("products")}catch(e){alert(e.message)}finally{setBusy(false)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Plus size={15}/>FarmBridge AI</span><h1>{t.addProduct}</h1><p>Add a product to the consumer marketplace.</p></div></div><form className="form-grid" onSubmit={submit}><label>Product Name<input name="name" value={form.name} onChange={change} required placeholder="Tomato"/></label><label>Category<select name="category" value={form.category} onChange={change}><option value="vegetables">vegetables</option><option value="fruits">fruits</option><option value="grains">grains</option><option value="spices">spices</option><option value="dairy">dairy</option><option value="organic">organic</option></select></label><label>Price<input name="price" type="number" value={form.price} onChange={change} required/></label><label>Stock<input name="stock" type="number" value={form.stock} onChange={change} required/></label><label>Unit<input name="unit" value={form.unit} onChange={change}/></label><label>Location<input name="location" value={form.location} onChange={change}/></label><label className="wide">Description<textarea name="description" value={form.description} onChange={change}/></label><button className="submit small-submit" disabled={busy}>{busy?"Saving...":t.addProduct}<Plus size={16}/></button></form></section>}
 
