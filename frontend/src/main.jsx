@@ -41,10 +41,26 @@ const productImages = Object.fromEntries(
 productImages.turmeric = productImageSources["turmeric (2)"];
 productImages.sunflower = productImageSources["sunflower (2)"];
 const productImageAliases = {
+  apples: "apple",
+  ಸೇಬು: "apple",
+  oranges: "orange",
+  ಕಿತ್ತಳೆ: "orange",
+  ಕಿತ್ತಳೆಹಣ್ಣು: "orange",
+  tomatoes: "tomato",
+  ಟೊಮೇಟೊ: "tomato",
+  ಟೊಮ್ಯಾಟೊ: "tomato",
+  ಟೊಮೆಟೊ: "tomato",
+  ಆಲೂಗಡ್ಡೆ: "potato",
+  ಈರುಳ್ಳಿ: "onion",
+  ಕ್ಯಾರೆಟ್: "carrot",
+  ಬದನೆಕಾಯಿ: "brinjal",
+  ಬಾಳೆಹಣ್ಣು: "banana",
+  ಬಾಳೆ: "banana",
+  ಮಾವು: "mango",
   "bell pepper": "capsicum",
   eggplant: "brinjal",
   "green chili": "green chilli",
-  tomatoes: "tomato"
+  "green chilies": "green chilli",
 };
 const productImagePlaceholder = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#f4f7f2"/><path d="M256 367c-39-63-38-137 4-211 42 74 43 148 4 211m-5-48c-42-44-91-58-147-43 38 57 87 74 147 56m10-13c40-42 88-56 143-41-37 55-84 71-143 54" fill="none" stroke="#82a779" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/></svg>'
@@ -52,10 +68,62 @@ const productImagePlaceholder = `data:image/svg+xml,${encodeURIComponent(
 
 function normalizeProductName(name) {
   return String(name || "")
+    .normalize("NFKC")
     .trim()
     .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ");
+}
+
+function singularProductWord(word) {
+  if (word.endsWith("ies") && word.length > 4) return `${word.slice(0, -3)}y`;
+  if (word.endsWith("oes") && word.length > 4) return word.slice(0, -2);
+  if (word.endsWith("s") && !word.endsWith("ss") && word.length > 3) return word.slice(0, -1);
+  return word;
+}
+
+function editDistance(left, right) {
+  const row = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    let diagonal = row[0];
+    row[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const above = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (left[i - 1] === right[j - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return row[right.length];
+}
+
+function findProductLibraryImage(name) {
+  const normalized = normalizeProductName(name);
+  const words = normalized.split(" ").filter(Boolean);
+  const candidates = [...new Set([
+    normalized,
+    ...words,
+    ...words.map(singularProductWord),
+    ...words.map(word => productImageAliases[word]).filter(Boolean),
+    productImageAliases[normalized],
+  ].filter(Boolean))];
+
+  for (const candidate of candidates) {
+    const alias = productImageAliases[candidate] || candidate;
+    if (productImages[alias]) return productImages[alias];
+  }
+
+  const ranked = Object.keys(productImages)
+    .filter(candidate => candidate.length >= 4)
+    .map(candidate => {
+      const score = Math.max(...candidates.map(value =>
+        1 - editDistance(value, candidate) / Math.max(value.length, candidate.length)
+      ));
+      return { candidate, score };
+    })
+    .sort((left, right) => right.score - left.score);
+  if (!ranked.length || ranked[0].score < 0.82) return productImagePlaceholder;
+  if (ranked[1] && ranked[0].score - ranked[1].score < 0.04) return productImagePlaceholder;
+  return productImages[ranked[0].candidate] || productImagePlaceholder;
 }
 
 function productImage(product) {
@@ -65,24 +133,16 @@ function productImage(product) {
       : "";
   if (savedImage) return savedImage;
 
-  const name = normalizeProductName(
+  return findProductLibraryImage(
     typeof product === "string" ? product : product?.name
   );
-  return productImages[productImageAliases[name] || name] || productImagePlaceholder;
 }
 
 function ProductImage({ product, alt, className }) {
   const image = productImage(product);
-  const localImage = productImage(
-    typeof product === "string" ? product : { name: product?.name }
-  );
   const [failedSource, setFailedSource] = useState("");
-  useEffect(() => setFailedSource(""), [image, localImage]);
-  const src = !failedSource
-    ? image
-    : failedSource === image && image !== localImage
-      ? localImage
-      : productImagePlaceholder;
+  useEffect(() => setFailedSource(""), [image]);
+  const src = failedSource ? productImagePlaceholder : image;
 
   return (
     <img
@@ -115,6 +175,40 @@ const T = {
 T.en = {
   home:"Home", about:"About Us", features:"Features", how:"How It Works", contact:"Contact", english:"English", kannada:"ಕನ್ನಡ", fresh:"Fresh. Local. Reliable.", bringing:"Bringing Farms", closer:"Closer to You", choose:"Choose your journey with us and experience the best of farming.", consumer:"Consumer", farmer:"Farmer", consumerDesc:"Shop fresh produce directly from farmers", farmerDesc:"Manage your farm, list products & grow your business", continueConsumer:"Continue as Consumer", continueFarmer:"Continue as Farmer", freshHealthy:"Fresh & Healthy", natural:"100% Natural Produce", supportLocal:"Support Local", empower:"Empowering Farmers", safe:"Safe & Reliable", quality:"Quality You Can Trust", aiPowered:"AI Powered", smart:"Smart Farming Solutions", search:"Search for products, farmers, categories...", deliver:"Deliver to", location:"Bangalore, Karnataka", categories:"All Categories", shopCategory:"Shop by Category", vegetables:"Fresh Vegetables", fruits:"Fruits", grains:"Grains & Pulses", spices:"Spices & Masalas", dairy:"Dairy & Eggs", oils:"Oils & Ghee", organic:"Organic Products", flowers:"Flower & Leaves", herbal:"Herbal & Natural", recommended:"Recommended for You", viewAll:"View All", orders:"My Orders", track:"Track Your Order", orderId:"Enter Order ID", trackBtn:"Track", assistant:"AI Farming Assistant", ask:"Ask me anything about farming, crops, fertilizers, diseases, soil, and more.", fertilizer:"Which fertilizer is best for tomatoes?", leafSpot:"How to control leaf spot in chili?", soil:"How to improve soil fertility?", maize:"Best time to sow maize?", question:"Type your question...", addCart:"Add to Cart", buy:"Buy Now", shopNow:"Shop Now", direct:"Direct from Farmers", quality2:"Fresh & Quality", fast:"Fast Delivery", payment:"Secure Payment", returns:"Easy Returns", noMiddle:"No Middlemen", combo:"Combo Deal", free:"Free Delivery", best:"Best Prices", login:"Login", register:"Register", email:"Email / Mobile", password:"Password", name:"Name", create:"Create Account", back:"Back", welcome:"Welcome Back", loginHint:"Continue to your account", registerHint:"Create your new account", noAccount:"Don't have an account?", haveAccount:"Already have an account?", demo:"Use any details for demo.", dashboard:"Dashboard", products:"My Products", addProduct:"Add Product", myOrders:"Orders", deliveries:"My Deliveries", cropInfo:"Crop & Fertility Info", previous:"Previous Year Data", transport:"Transport Partners", matching:"Transport Matching", earnings:"Earnings", profile:"Profile", logout:"Logout", popular:"Popular Categories", available:"Available Products", cropData:"Previous Year Crop Data", selectCrop:"Select Crop", selectYear:"Select Year", report:"View Report", avgYield:"Average Yield", avgPrice:"Average Price", production:"Total Production", income:"Total Income", detailed:"View Detailed Report", transportPartners:"Transport Partners", transportMatch:"Transport Matching (AI Powered)", assign:"Assign Transport", shared:"This order can be shared with 1 more farmer.", ordersTracking:"My Orders & Delivery Tracking", placed:"Order Placed", confirmed:"Confirmed", assigned:"Transport Assigned", out:"Out for Delivery", delivered:"Delivered", select:"Select", availableYes:"Available", from:"From", to:"To", totalWeight:"Total Weight", deliveryDate:"Delivery Date", viewShared:"View Shared Orders"
 };
+Object.assign(T.kn, {
+  productName:"ಉತ್ಪನ್ನದ ಹೆಸರು", description:"ವಿವರಣೆ", price:"ಬೆಲೆ", stock:"ದಾಸ್ತಾನು", unit:"ಘಟಕ",
+  imageUpload:"ಉತ್ಪನ್ನದ ಚಿತ್ರ (ಐಚ್ಛಿಕ)", imageHint:"JPEG, PNG ಅಥವಾ WebP; ಗರಿಷ್ಠ 8 MB. ಚಿತ್ರವನ್ನು ಸ್ವಯಂಚಾಲಿತವಾಗಿ ಸಂಕುಚಿತಗೊಳಿಸಲಾಗುತ್ತದೆ.",
+  removeImage:"ಚಿತ್ರ ತೆಗೆದುಹಾಕಿ", categoryCorrection:"ವರ್ಗವನ್ನು ಆಯ್ಕೆಮಾಡಿ", categoryCorrectionHint:"ಈ ಉತ್ಪನ್ನದ ವರ್ಗವನ್ನು ಖಚಿತಪಡಿಸಲು ದಯವಿಟ್ಟು ಒಂದನ್ನು ಆಯ್ಕೆಮಾಡಿ.",
+  imageInvalid:"ದಯವಿಟ್ಟು JPEG, PNG ಅಥವಾ WebP ಚಿತ್ರವನ್ನು ಆಯ್ಕೆಮಾಡಿ.", imageTooLarge:"ಚಿತ್ರವು 8 MB ಗಿಂತ ಚಿಕ್ಕದಾಗಿರಬೇಕು.",
+  nameRequired:"ಉತ್ಪನ್ನದ ಹೆಸರನ್ನು ನಮೂದಿಸಿ.", priceRequired:"ಮಾನ್ಯ ಬೆಲೆಯನ್ನು ನಮೂದಿಸಿ.", stockRequired:"ಮಾನ್ಯ ದಾಸ್ತಾನು ಪ್ರಮಾಣವನ್ನು ನಮೂದಿಸಿ.",
+  productIntro:"ಮಾರುಕಟ್ಟೆಗೆ ಉತ್ಪನ್ನವನ್ನು ಸೇರಿಸಿ.", productAdded:"ಉತ್ಪನ್ನವನ್ನು ಯಶಸ್ವಿಯಾಗಿ ಸೇರಿಸಲಾಗಿದೆ",
+  saving:"ಉಳಿಸಲಾಗುತ್ತಿದೆ...", aboutTitle:"FarmBridge AI ಬಗ್ಗೆ", aboutCopy:"FarmBridge AI ರೈತರನ್ನು ಗ್ರಾಹಕರೊಂದಿಗೆ ನೇರವಾಗಿ ಸಂಪರ್ಕಿಸಿ ಸ್ಥಳೀಯ ಉತ್ಪನ್ನಗಳ ಖರೀದಿ ಮತ್ತು ಮಾರಾಟವನ್ನು ಸರಳಗೊಳಿಸುತ್ತದೆ.",
+  featuresTitle:"FarmBridge AI ವೈಶಿಷ್ಟ್ಯಗಳು", howTitle:"ಇದು ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ", contactTitle:"ಸಹಾಯ ಮತ್ತು ಸಂಪರ್ಕ",
+  publicAbout:"ನಮ್ಮ ವೇದಿಕೆ ರೈತರಿಗೆ ತಮ್ಮ ಉತ್ಪನ್ನಗಳನ್ನು ನಿರ್ವಹಿಸಲು ಮತ್ತು ಗ್ರಾಹಕರಿಗೆ ಸ್ಥಳೀಯ ಉತ್ಪನ್ನಗಳನ್ನು ಹುಡುಕಿ ಖರೀದಿಸಲು ಒಂದೇ ಸ್ಥಳವನ್ನು ಒದಗಿಸುತ್ತದೆ.",
+  publicFeatures:"ಉತ್ಪನ್ನ ಹುಡುಕಾಟ ಮತ್ತು ವರ್ಗಗಳು", publicFeaturesCopy:"ಸ್ಥಳೀಯವಾಗಿ ಪಟ್ಟಿ ಮಾಡಲಾದ ಉತ್ಪನ್ನಗಳನ್ನು ಹುಡುಕಿ, ವಿವರಗಳನ್ನು ನೋಡಿ ಮತ್ತು ರೈತರ ಚಿತ್ರಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.",
+  publicOrders:"ಕಾರ್ಟ್, ಖರೀದಿ ಮತ್ತು ಆರ್ಡರ್‌ಗಳು", publicOrdersCopy:"ಕಾರ್ಟ್, ಇಚ್ಛಾಪಟ್ಟಿ, ಚೆಕ್‌ಔಟ್ ಮತ್ತು ಆರ್ಡರ್ ಸ್ಥಿತಿಯನ್ನು ನಿರ್ವಹಿಸಿ.",
+  publicFarm:"ರೈತರ ಉಪಕರಣಗಳು", publicFarmCopy:"ಉತ್ಪನ್ನಗಳು, ಆರ್ಡರ್‌ಗಳು, ಆದಾಯ ಮತ್ತು ಸಾಗಣೆ ಪಾಲುದಾರರನ್ನು ನಿರ್ವಹಿಸಿ.",
+  publicAi:"ಕೃಷಿ AI ಸಹಾಯಕ", publicAiCopy:"ಸಾಮಾನ್ಯ ಬೆಳೆ ಬೆಳವಣಿಗೆ ಮತ್ತು ಕೃಷಿ ಪ್ರಶ್ನೆಗಳಿಗೆ Groq ಆಧಾರಿತ ಉತ್ತರಗಳನ್ನು ಪಡೆಯಿರಿ.",
+  howCopy:"ಗ್ರಾಹಕ ಅಥವಾ ರೈತ ಪಾತ್ರವನ್ನು ಆಯ್ಕೆಮಾಡಿ. ರೈತರು ನೋಂದಣಿ ಮಾಡಿ ಉತ್ಪನ್ನಗಳನ್ನು ಸೇರಿಸುತ್ತಾರೆ; ಗ್ರಾಹಕರು ಖರೀದಿ ಮಾಡಿ ತಮ್ಮ ಆರ್ಡರ್‌ಗಳನ್ನು ಟ್ರ್ಯಾಕ್ ಮಾಡುತ್ತಾರೆ.",
+  contactCopy:"ಲಾಗಿನ್ ಆದ ನಂತರ ನಿಮ್ಮ ಪ್ರೊಫೈಲ್, ಆರ್ಡರ್‌ಗಳು ಅಥವಾ ಅಧಿಸೂಚನೆಗಳ ಮೂಲಕ FarmBridge ಚಟುವಟಿಕೆಗಳನ್ನು ನಿರ್ವಹಿಸಿ."
+});
+Object.assign(T.en, {
+  productName:"Product name", description:"Description", price:"Price", stock:"Stock", unit:"Unit",
+  imageUpload:"Product image (optional)", imageHint:"JPEG, PNG, or WebP; up to 8 MB. The image is compressed automatically.",
+  removeImage:"Remove image", categoryCorrection:"Choose a category", categoryCorrectionHint:"Please choose the correct category so this product is not misclassified.",
+  imageInvalid:"Choose a JPEG, PNG, or WebP image.", imageTooLarge:"The image must be smaller than 8 MB.",
+  nameRequired:"Enter a product name.", priceRequired:"Enter a valid price.", stockRequired:"Enter a valid stock quantity.",
+  productIntro:"Add a product to the consumer marketplace.", productAdded:"Product added successfully",
+  saving:"Saving...", aboutTitle:"About FarmBridge AI", aboutCopy:"FarmBridge AI connects farmers directly with consumers, making it easier to list, discover, and buy local produce.",
+  featuresTitle:"FarmBridge AI Features", howTitle:"How It Works", contactTitle:"Help and Contact",
+  publicAbout:"Our platform gives farmers one place to manage products and gives consumers a straightforward way to find and buy local produce.",
+  publicFeatures:"Product discovery and categories", publicFeaturesCopy:"Search locally listed products, view their details, and see the images provided by farmers.",
+  publicOrders:"Cart, checkout, and orders", publicOrdersCopy:"Manage your cart, wishlist, checkout, and order status.",
+  publicFarm:"Farmer tools", publicFarmCopy:"Manage products, orders, earnings, and transport partners.",
+  publicAi:"Farming AI assistant", publicAiCopy:"Get Groq-powered answers to general crop-growing and farming questions.",
+  howCopy:"Choose a consumer or farmer role. Farmers register and list products; consumers shop, check out, and track their orders.",
+  contactCopy:"After signing in, manage your FarmBridge activity through your profile, orders, and notifications."
+});
 
 const productData = [
   [tomato,"Tomato","Ramesh Farmer","₹25 / kg","50 kg","vegetables"],
@@ -139,9 +233,53 @@ const labelKey = { vegetables:"vegetables", fruits:"fruits", grains:"grains", sp
 
 function Lang({lang,setLang}) { return <button className="lang" onClick={()=>setLang(lang === "kn" ? "en" : "kn")}><Globe2 size={17}/>{lang === "kn" ? "ಕನ್ನಡ" : "English"}<ChevronDown size={15}/></button> }
 function Logo({dark=false}) { return <div className={`logo ${dark?"dark":""}`}><Leaf size={34}/><div><b>FarmBridge <span>AI</span></b><small>Bringing Farms Closer to You</small></div></div> }
-function Top({lang,setLang,back}) { const t=T[lang]; return <header className="top">{back && <button className="back" onClick={back}><ArrowLeft size={18}/>{t.back}</button>}<Logo/><nav><a>{t.home}</a><a>{t.about}</a><a>{t.features}</a><a>{t.how}</a><a>{t.contact}</a></nav><Lang lang={lang} setLang={setLang}/></header> }
+function Top({lang,setLang,back,go}) { const t=T[lang]; const links=[["landing",t.home],["about",t.about],["features",t.features],["how",t.how],["contact",t.contact]]; return <header className="top">{back && <button className="back" onClick={back}><ArrowLeft size={18}/>{t.back}</button>}<Logo/><nav>{links.map(([page,label],index)=><a href="#" key={`${page}-${index}`} onClick={event=>{event.preventDefault();go?.(page)}}>{label}</a>)}</nav><Lang lang={lang} setLang={setLang}/></header> }
 
-function Landing({lang,setLang,go}) { const t=T[lang]; return <div className="landing" style={{backgroundImage:`url(${landingFarm})`}}><Top lang={lang} setLang={setLang}/><div className="landing-main"><div className="landing-copy"><div className="eyebrow"><Leaf size={17}/>{t.fresh}</div><h1>{t.bringing}<br/><span>{t.closer}</span></h1><p>{t.choose}</p></div><div className="roles"><Role farmer={false} t={t} go={()=>go("consumer")}/><Role farmer t={t} go={()=>go("farmerLogin")}/></div></div><div className="features"><Feature i={<Leaf/>} a={t.freshHealthy} b={t.natural}/><Feature i={<UserRound/>} a={t.supportLocal} b={t.empower}/><Feature i={<ShieldCheck/>} a={t.safe} b={t.quality}/><Feature i={<Sparkles/>} a={t.aiPowered} b={t.smart}/></div><footer>© 2026 FarmBridge AI. All rights reserved.</footer></div> }
+function Landing({lang,setLang,go}) { const t=T[lang]; return <div className="landing" style={{backgroundImage:`url(${landingFarm})`}}><Top lang={lang} setLang={setLang} go={go}/><div className="landing-main"><div className="landing-copy"><div className="eyebrow"><Leaf size={17}/>{t.fresh}</div><h1>{t.bringing}<br/><span>{t.closer}</span></h1><p>{t.choose}</p></div><div className="roles"><Role farmer={false} t={t} go={()=>go("consumer")}/><Role farmer t={t} go={()=>go("farmerLogin")}/></div></div><div className="features"><Feature i={<Leaf/>} a={t.freshHealthy} b={t.natural}/><Feature i={<UserRound/>} a={t.supportLocal} b={t.empower}/><Feature i={<ShieldCheck/>} a={t.safe} b={t.quality}/><Feature i={<Sparkles/>} a={t.aiPowered} b={t.smart}/></div><footer>© 2026 FarmBridge AI. All rights reserved.</footer></div> }
+function PublicPage({page,lang,setLang,go}) {
+  const t=T[lang];
+  const isAbout=page==="about";
+  const pageTitle=page==="how"?t.howTitle:page==="contact"?t.contactTitle:isAbout?t.aboutTitle:t.featuresTitle;
+  return <div className="public-page">
+    <Top lang={lang} setLang={setLang} go={go}/>
+    <main className="public-content">
+      <section className="public-intro">
+        <span className="eyebrow"><Leaf size={16}/>FarmBridge AI</span>
+        <h1>{pageTitle}</h1>
+        <p>{isAbout?t.aboutCopy:t.publicAbout}</p>
+        <div className="public-actions">
+          <button onClick={()=>go("consumer")}>{t.continueConsumer}<ArrowRight size={16}/></button>
+          <button onClick={()=>go("farmerLogin")}>{t.continueFarmer}<ArrowRight size={16}/></button>
+        </div>
+      </section>
+      <section className="public-section" id="features">
+        <h2>{t.featuresTitle}</h2>
+        <div className="public-grid">
+          {[
+            [Search,t.publicFeatures,t.publicFeaturesCopy],
+            [ShoppingCart,t.publicOrders,t.publicOrdersCopy],
+            [Sprout,t.publicFarm,t.publicFarmCopy],
+            [Sparkles,t.publicAi,t.publicAiCopy],
+          ].map(([Icon,title,copy])=><article className="public-card" key={title}>
+            <Icon size={24}/><h3>{title}</h3><p>{copy}</p>
+          </article>)}
+        </div>
+      </section>
+      <section className="public-section" id="how">
+        <h2>{t.howTitle}</h2><p>{t.howCopy}</p>
+        <ol className="public-steps">
+          <li><b>1.</b> {t.choose}</li>
+          <li><b>2.</b> {t.publicFarmCopy}</li>
+          <li><b>3.</b> {t.publicOrdersCopy}</li>
+        </ol>
+      </section>
+      <section className="public-section" id="contact">
+        <h2>{t.contactTitle}</h2><p>{t.contactCopy}</p>
+      </section>
+    </main>
+    <footer>© 2026 FarmBridge AI. All rights reserved.</footer>
+  </div>;
+}
 function Feature({i,a,b}) { return <div className="feature"><span>{i}</span><div><b>{a}</b><small>{b}</small></div></div> }
 function Role({farmer,t,go}) { return <div className={`role ${farmer?"farmer":"consumer"}`}><div className="role-head"><div className="role-icon">{farmer?<Sprout size={42}/>:<ShoppingCart size={42}/>}</div><div><small>I'm a</small><h2>{farmer?t.farmer:t.consumer}</h2><p>{farmer?t.farmerDesc:t.consumerDesc}</p></div></div><div className="points">{(farmer?["Grow Your Business","Reach More Customers","Better Profits"]:[t.freshHealthy,t.direct,t.fast]).map(x=><div key={x}><Check size={17}/>{x}</div>)}</div><button onClick={go}>{farmer?t.continueFarmer:t.continueConsumer}<ArrowRight size={18}/></button></div> }
 
@@ -251,7 +389,7 @@ function Consumer({lang,setLang,go}) {
   if (view === "details" && selectedProduct) return <ProductDetails product={selectedProduct} go={()=>setView("home")} addToCart={addToCart} buyNow={buyNow} liked={isWishlisted(selectedProduct)} onWishlist={()=>toggleWishlist(selectedProduct)}/>;
 
   return <div className="consumer-page">
-    <Top lang={lang} setLang={setLang} back={()=>go("landing")}/>
+    <Top lang={lang} setLang={setLang} back={()=>go("landing")} go={go}/>
     <div className="consumer-header">
       <button className="all-cat"><Menu size={17}/>{t.categories}</button>
       <div className="consumer-nav">
@@ -283,7 +421,7 @@ function Consumer({lang,setLang,go}) {
         <section className="box product-section"><div className="title"><h2>{category?`${t[category]} • ${t.recommended}`:t.recommended}</h2><a onClick={()=>setCategory(category||"vegetables")}>{t.viewAll}</a></div><div className="product-grid">{visible.slice(0,10).map(p=><Product key={p.id} p={p} t={t} onCart={()=>addToCart(p)} onBuy={()=>buyNow(p)} liked={isWishlisted(p)} onWishlist={()=>toggleWishlist(p)} onOpen={()=>openProduct(p)}/>)}</div>{!visible.length&&<div className="empty">No products found. Try another search.</div>}</section>
         <div className="promos"><Promo t={t.combo} s="Fresh Vegetables Combo"/><Promo t={t.free} s="On orders above ₹499"/><Promo t={t.best} s="Direct from Farmers"/></div>
       </main>
-      <aside className="right"><Orders t={t} onLogin={()=>loggedIn?setView("orders"):requireLogin()}/><Assistant t={t}/></aside>
+      <aside className="right"><Orders t={t} onLogin={()=>loggedIn?setView("orders"):requireLogin()}/><Assistant t={t} loggedIn={loggedIn} onLogin={requireLogin}/></aside>
     </div>
     {cart.length>0&&<div className="toast">{cart.length} item(s) in cart <button onClick={()=>setView("cart")}>View Cart</button></div>}
   </div>;
@@ -369,8 +507,34 @@ function Orders({t,onLogin}) {
 }
 
 
-function Assistant({t}) {
-  const [answer,setAnswer] = useState("");
+function Assistant({t,loggedIn,onLogin}) {
+  const [question,setQuestion] = useState("");
+  const [messages,setMessages] = useState([]);
+  const [conversationId,setConversationId] = useState(null);
+  const [busy,setBusy] = useState(false);
+  const [error,setError] = useState("");
+
+  async function ask(value=question) {
+    const message=value.trim();
+    if(!message||busy)return;
+    if(!loggedIn){onLogin();return}
+    setQuestion("");
+    setError("");
+    setBusy(true);
+    try{
+      const result=await apiRequest("/ai/farming-assistant",{
+        method:"POST",
+        body:JSON.stringify({message,...(conversationId?{conversationId}:{})})
+      });
+      setConversationId(result.conversation.id);
+      setMessages(current=>[...current,{role:"user",content:message},{role:"assistant",content:result.answer}]);
+    }catch(requestError){
+      setQuestion(message);
+      setError(requestError.message);
+    }finally{
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="box assistant">
@@ -385,24 +549,26 @@ function Assistant({t}) {
       {[t.fertilizer,t.leafSpot,t.soil,t.maize].map(x => (
         <button
           key={x}
-          onClick={() => setAnswer(x)}
+          onClick={() => ask(x)}
         >
           {x}
         </button>
       ))}
 
-      {answer && (
-        <div className="ai-answer">
-          AI tip: {answer.replace("?","")} — follow crop-specific recommendations.
-        </div>
-      )}
+      {messages.map((message,index)=><div className="ai-answer" key={`${message.role}-${index}`}>
+        <b>{message.role==="assistant"?"FarmBridge AI":"You"}</b><br/>{message.content}
+      </div>)}
+      {error&&<div className="ai-answer" role="alert">{error}</div>}
 
-      <div className="ask">
-        <input placeholder={t.question}/>
-        <button>
-          <ArrowRight size={15}/>
+      <form className="ask" onSubmit={event=>{event.preventDefault();ask()}}>
+        <input value={question} onChange={event=>setQuestion(event.target.value)} placeholder={t.question} aria-label={t.question}/>
+        <button type="submit" disabled={busy}>
+          {busy?"…":<ArrowRight size={15}/>}
         </button>
-      </div>
+      </form>
+      {!loggedIn&&<button type="button" onClick={onLogin}>
+        {t.login}
+      </button>}
     </div>
   );
 }
@@ -650,6 +816,7 @@ function Auth({role,mode,lang,setLang,go}) {
 
     const name = form.get("name")?.toString().trim() || "";
     const email = form.get("email")?.toString().trim() || "";
+    const phone = form.get("phone")?.toString().trim() || "";
     const password = form.get("password")?.toString() || "";
 
     try {
@@ -659,6 +826,7 @@ function Auth({role,mode,lang,setLang,go}) {
         ? {
             name,
             email,
+            phone,
             password,
             role: farmer ? "farmer" : "consumer"
           }
@@ -691,6 +859,7 @@ function Auth({role,mode,lang,setLang,go}) {
         lang={lang}
         setLang={setLang}
         back={() => go(farmer ? "landing" : "consumer")}
+        go={go}
       />
 
       <div className="auth-wrap">
@@ -728,17 +897,24 @@ function Auth({role,mode,lang,setLang,go}) {
               <input
                 name="name"
                 required
+                maxLength={120}
                 placeholder={t.name}
               />
             </label>
           )}
 
+          {reg&&<label>
+            {lang==="kn"?"ಮೊಬೈಲ್ ಸಂಖ್ಯೆ":"Mobile number"}
+            <input name="phone" type="tel" inputMode="tel" autoComplete="tel" required pattern="[+0-9() -]{7,20}" placeholder="+91 9876543210"/>
+          </label>}
+
           <label>
             {t.email}
             <input
               name="email"
-              type="email"
+              type="text"
               required
+              autoComplete={reg?"email":"username"}
               placeholder={t.email}
             />
           </label>
@@ -778,6 +954,13 @@ function Auth({role,mode,lang,setLang,go}) {
             {!loading && <ArrowRight size={17}/>}
           </button>
 
+          <button className="google-login" type="button" disabled title="Google OAuth is not configured">
+            G&nbsp; Continue with Google (not configured)
+          </button>
+          <small className="oauth-note">
+            Google sign-in is unavailable until a secure backend OAuth integration is configured.
+          </small>
+
           <small>
             {reg
               ? "Your account will be securely stored in PostgreSQL."
@@ -807,7 +990,7 @@ function Auth({role,mode,lang,setLang,go}) {
 }
 
 const farmerMenu = [
-  ["dashboard",BarChart3],["products",Boxes],["addProduct",Plus],["myOrders",ClipboardList],["deliveries",Truck],["assistant",BrainCircuit],["cropInfo",Leaf],["previous",History],["transport",Truck],["matching",Sparkles],["earnings",CircleDollarSign],["profile",UserRound]
+  ["dashboard",BarChart3],["products",Boxes],["addProduct",Plus],["myOrders",ClipboardList],["deliveries",Truck],["assistant",BrainCircuit],["previous",History],["transport",Truck],["matching",Sparkles],["earnings",CircleDollarSign],["profile",UserRound]
 ];
 
 function Farmer({lang,setLang,go}) {
@@ -842,7 +1025,6 @@ function FarmerPanel({view,t,dashboard,products,allProducts,orders,deliveries,ea
   if(view==="myOrders") return <FarmerOrdersLive t={t} orders={orders} reload={reload}/>;
   if(view==="deliveries") return <FarmerDeliveriesLive t={t} deliveries={deliveries}/>;
   if(view==="assistant") return <FarmerAILive t={t}/>;
-  if(view==="cropInfo") return <CropLive t={t} />;
   if(view==="previous") return <PreviousCropLive t={t}/>;
   if(view==="transport") return <TransportLive t={t}/>;
   if(view==="matching") return <MatchingLive t={t} orders={orders}/>;
@@ -852,11 +1034,154 @@ function FarmerPanel({view,t,dashboard,products,allProducts,orders,deliveries,ea
   return null;
 }
 
-function FarmerDashboardLive({t,dashboard,products,setView}){const stats=dashboard?.stats||{};return <><section className="farmer-hero" style={{backgroundImage:`url(${farmerHero})`}}><div><h1><span>Fresh Produce</span><br/>Directly from Farmers<br/><span>to Your Home</span></h1><p>Good for you. Good for farmers.</p><button onClick={()=>setView("products")}>{t.products} <ArrowRight size={15}/></button></div></section><div className="farmer-stat-grid">{[["Products",stats.products??0,Boxes],["Orders",stats.orders??0,ClipboardList],["Pending Orders",stats.pendingOrders??0,History],["Delivered",stats.deliveries??0,PackageCheck],["Earnings",`₹${Number(stats.earnings||0).toFixed(2)}`,CircleDollarSign]].map(([a,b,I])=><div key={a}><I/><small>{a}</small><strong>{b}</strong></div>)}</div><div className="farmer-grid"><section className="box"><div className="title"><h2>{t.available}</h2><a onClick={()=>setView("products")}>{t.viewAll}</a></div><div className="farmer-products">{products.slice(0,6).map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.location||"Farm"}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>setView("products")}>Manage</button></div>)}</div></section><CropLive t={t}/></div></>}
+function FarmerDashboardLive({t,dashboard,products,setView}) {
+  const stats=dashboard?.stats||{};
+  return <>
+    <section className="farmer-hero" style={{backgroundImage:`url(${farmerHero})`}}>
+      <div><h1><span>Fresh Produce</span><br/>Directly from Farmers<br/><span>to Your Home</span></h1><p>Good for you. Good for farmers.</p><button onClick={()=>setView("products")}>{t.products} <ArrowRight size={15}/></button></div>
+    </section>
+    <div className="farmer-stat-grid">{[["Products",stats.products??0,Boxes],["Orders",stats.orders??0,ClipboardList],["Pending Orders",stats.pendingOrders??0,History],["Delivered",stats.deliveries??0,PackageCheck],["Earnings",`₹${Number(stats.earnings||0).toFixed(2)}`,CircleDollarSign]].map(([a,b,I])=><div key={a}><I/><small>{a}</small><strong>{b}</strong></div>)}</div>
+    <section className="box"><div className="title"><h2>{t.available}</h2><a onClick={()=>setView("products")}>{t.viewAll}</a></div><div className="farmer-products">{products.slice(0,6).map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.location||"Farm"}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>setView("products")}>Manage</button></div>)}</div></section>
+  </>;
+}
 
 function FarmerProductsLive({t,products,reload,setView}){async function remove(id){if(!confirm("Remove this product?"))return;try{await apiRequest(`/products/${id}`,{method:"DELETE"});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><button onClick={()=>setView("dashboard")}><ArrowLeft size={16}/>{t.back}</button><div><span className="eyebrow"><Leaf size={15}/>FarmBridge AI</span><h1>{t.products}</h1><p>Manage your active products, stock and prices.</p></div></div><div className="farmer-products large">{products.map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.category} • {p.location||""}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>remove(p.id)}>Remove</button></div>)}{!products.length&&<div className="empty">No products found.</div>}</div></section>}
 
-function AddProductLive({t,reload,setView}){const [form,setForm]=useState({name:"",category:"vegetables",description:"",price:"",unit:"kg",stock:"",location:""});const [busy,setBusy]=useState(false);const change=e=>setForm({...form,[e.target.name]:e.target.value});async function submit(e){e.preventDefault();try{setBusy(true);await apiRequest("/products",{method:"POST",body:JSON.stringify({...form,price:Number(form.price),stock:Number(form.stock)})});alert("Product added successfully");await reload();setView("products")}catch(e){alert(e.message)}finally{setBusy(false)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Plus size={15}/>FarmBridge AI</span><h1>{t.addProduct}</h1><p>Add a product to the consumer marketplace.</p></div></div><form className="form-grid" onSubmit={submit}><label>Product Name<input name="name" value={form.name} onChange={change} required placeholder="Tomato"/></label><label>Category<select name="category" value={form.category} onChange={change}><option value="vegetables">vegetables</option><option value="fruits">fruits</option><option value="grains">grains</option><option value="spices">spices</option><option value="dairy">dairy</option><option value="organic">organic</option></select></label><label>Price<input name="price" type="number" value={form.price} onChange={change} required/></label><label>Stock<input name="stock" type="number" value={form.stock} onChange={change} required/></label><label>Unit<input name="unit" value={form.unit} onChange={change}/></label><label>Location<input name="location" value={form.location} onChange={change}/></label><label className="wide">Description<textarea name="description" value={form.description} onChange={change}/></label><button className="submit small-submit" disabled={busy}>{busy?"Saving...":t.addProduct}<Plus size={16}/></button></form></section>}
+async function compressProductImage(file) {
+  const source = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Image could not be read."));
+    reader.readAsDataURL(file);
+  });
+  const image = new Image();
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error("Image could not be decoded."));
+    image.src = source;
+  });
+  if(image.naturalWidth>12000||image.naturalHeight>12000||image.naturalWidth*image.naturalHeight>80_000_000){
+    throw new Error("Image dimensions are too large.");
+  }
+  let width = image.naturalWidth;
+  let height = image.naturalHeight;
+  const scale = Math.min(1, 1600 / Math.max(width, height));
+  width = Math.max(1, Math.round(width * scale));
+  height = Math.max(1, Math.round(height * scale));
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Image compression is not available in this browser.");
+
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    canvas.width = width;
+    canvas.height = height;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    const compressed = canvas.toDataURL("image/jpeg", Math.max(0.56, 0.86 - attempt * 0.05));
+    const encoded = compressed.slice(compressed.indexOf(",") + 1);
+    const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
+    if (encoded.length * 3 / 4 - padding <= 2_500_000) return compressed;
+    width = Math.max(1, Math.round(width * 0.8));
+    height = Math.max(1, Math.round(height * 0.8));
+  }
+  throw new Error("Image could not be compressed to the upload size limit.");
+}
+
+function AddProductLive({t,reload,setView}) {
+  const [form,setForm]=useState({name:"",description:"",price:"",unit:"kg",stock:"",location:""});
+  const [image,setImage]=useState("");
+  const [imageBusy,setImageBusy]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [correctionCategory,setCorrectionCategory]=useState("");
+  const [formError,setFormError]=useState("");
+  const change=event=>{
+    setForm(current=>({...current,[event.target.name]:event.target.value}));
+    if(event.target.name==="name")setCorrectionCategory("");
+    setFormError("");
+  };
+  async function selectImage(event) {
+    const file=event.target.files?.[0];
+    event.target.value="";
+    if(!file)return;
+    if(!["image/jpeg","image/png","image/webp"].includes(file.type)){
+      setFormError(t.imageInvalid);
+      return;
+    }
+    if(file.size>8*1024*1024){
+      setFormError(t.imageTooLarge);
+      return;
+    }
+    setImageBusy(true);
+    setFormError("");
+    try{
+      setImage(await compressProductImage(file));
+    }catch(error){
+      setFormError(t.imageInvalid);
+    }finally{
+      setImageBusy(false);
+    }
+  }
+  async function submit(event) {
+    event.preventDefault();
+    setFormError("");
+    if(!form.name.trim()){setFormError(t.nameRequired);return}
+    if(form.price===""||!Number.isFinite(Number(form.price))||Number(form.price)<0){setFormError(t.priceRequired);return}
+    if(form.stock===""||!Number.isFinite(Number(form.stock))||Number(form.stock)<0){setFormError(t.stockRequired);return}
+    try{
+      setBusy(true);
+      await apiRequest("/products",{
+        method:"POST",
+        body:JSON.stringify({
+          ...form,
+          ...(correctionCategory?{category:correctionCategory}:{}),
+          ...(image?{image}:{}),
+          price:Number(form.price),
+          stock:Number(form.stock)
+        })
+      });
+      alert(t.productAdded);
+      await reload();
+      setView("products");
+    }catch(error){
+      if(error.message.includes("Could not confidently categorize")){
+        setCorrectionCategory("");
+        setFormError(t.categoryCorrectionHint);
+      }else{
+        setFormError(error.message);
+      }
+    }finally{
+      setBusy(false);
+    }
+  }
+  const categories=[
+    ["vegetables",t.vegetables],["fruits",t.fruits],["grains",t.grains],
+    ["spices",t.spices],["dairy",t.dairy],["oils",t.oils],
+    ["organic",t.organic],["flowers",t.flowers],["herbal",t.herbal]
+  ];
+  return <section className="detail-view">
+    <div className="detail-head"><div><span className="eyebrow"><Plus size={15}/>FarmBridge AI</span><h1>{t.addProduct}</h1><p>{t.productIntro}</p></div></div>
+    <form className="form-grid" onSubmit={submit} noValidate>
+      <label>{t.productName}<input name="name" value={form.name} onChange={change} maxLength={160} placeholder="Tomato / ಟೊಮೇಟೊ"/></label>
+      <label>{t.price}<input name="price" type="number" min="0" step="any" value={form.price} onChange={change}/></label>
+      <label>{t.stock}<input name="stock" type="number" min="0" step="any" value={form.stock} onChange={change}/></label>
+      <label>{t.unit}<input name="unit" value={form.unit} onChange={change}/></label>
+      <label>{t.location}<input name="location" value={form.location} onChange={change}/></label>
+      <label className="wide">{t.description}<textarea name="description" value={form.description} onChange={change}/></label>
+      <label className="wide product-upload">{t.imageUpload}
+        <input type="file" accept="image/jpeg,image/png,image/webp" onChange={selectImage}/>
+        <small>{t.imageHint}</small>
+      </label>
+      {imageBusy&&<p className="wide" role="status">{t.saving}</p>}
+      {image&&<div className="wide product-image-preview"><img src={image} alt={t.imageUpload}/><button type="button" onClick={()=>setImage("")}>{t.removeImage}</button></div>}
+      {formError&&<div className="wide product-form-error" role="alert">{formError}</div>}
+      {formError===t.categoryCorrectionHint&&<fieldset className="wide category-correction">
+        <legend>{t.categoryCorrection}</legend><p>{t.categoryCorrectionHint}</p>
+        <div>{categories.map(([key,label])=><button type="button" className={correctionCategory===key?"selected":""} key={key} onClick={()=>setCorrectionCategory(key)}>{label}</button>)}</div>
+      </fieldset>}
+      <button className="submit small-submit" disabled={busy||imageBusy}>{busy?t.saving:t.addProduct}<Plus size={16}/></button>
+    </form>
+  </section>;
+}
 
 function FarmerOrdersLive({t,orders,reload}){async function status(id,status){try{await apiRequest(`/orders/${id}/status`,{method:"PATCH",body:JSON.stringify({status})});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><ClipboardList size={15}/>FarmBridge AI</span><h1>{t.myOrders}</h1><p>Customer orders received for your products.</p></div></div><div className="simple-list">{orders.map(o=><div key={o.id}><PackageCheck/><div><b>ORD{String(o.id).padStart(5,"0")} • ₹{Number(o.totalAmount||0).toFixed(2)}</b><small>{o.deliveryAddress||"No address"}</small><small>Status: {o.status}</small><small className="farmer-payment-detail">Payment: {orderPaymentLabel(o.paymentMethod)} · {o.paymentStatus||"Not recorded"}{o.isDemoPayment?" · DEMO ONLY":""}</small></div><select value={o.status} onChange={e=>status(o.id,e.target.value)}><option value="placed">placed</option><option value="confirmed">confirmed</option><option value="transport_assigned">transport assigned</option><option value="out_for_delivery">out for delivery</option><option value="delivered">delivered</option><option value="cancelled">cancelled</option></select></div>)}{!orders.length&&<p>No orders yet.</p>}</div></section>}
 
@@ -865,8 +1190,6 @@ function FarmerDeliveriesLive({t,deliveries}){return <section className="detail-
 function FarmerAILive({t}){return <FarmingAssistant t={t}/>}
 
 function PreviousCropLive({t}){const [records,setRecords]=useState([]);const [form,setForm]=useState({cropName:"Tomato",year:new Date().getFullYear()-1,category:"vegetables",season:"",areaAcres:"",yieldAmount:"",averagePrice:"",totalIncome:"",soilType:"Loamy",soilPh:"",notes:""});const [summary,setSummary]=useState(null);async function load(){try{const [r,s]=await Promise.all([apiRequest("/crops/previous-year"),apiRequest("/crops/summary")]);setRecords(r.records||[]);setSummary(s.summary)}catch(e){alert(e.message)}}useEffect(()=>{load()},[]);const ch=e=>setForm({...form,[e.target.name]:e.target.value});async function save(e){e.preventDefault();try{await apiRequest("/crops/previous-year",{method:"POST",body:JSON.stringify({...form,year:Number(form.year)})});alert("Crop record saved");await load()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><History size={15}/>FarmBridge AI</span><h1>{t.previous}</h1><p>Save and review previous-year crop performance.</p></div></div>{summary&&<div className="stats">{[[t.avgYield,summary.averageYield],[t.avgPrice,summary.averagePrice],[t.production,summary.totalProduction],[t.income,summary.totalIncome]].map(x=><div key={x[0]}><small>{x[0]}</small><b>{x[1]}</b><span>From saved records</span></div>)}</div>}<form className="form-grid crop-form" onSubmit={save}><label>Crop<input name="cropName" value={form.cropName} onChange={ch}/></label><label>Year<input name="year" type="number" value={form.year} onChange={ch}/></label><label>Area (acres)<input name="areaAcres" value={form.areaAcres} onChange={ch}/></label><label>Yield<input name="yieldAmount" value={form.yieldAmount} onChange={ch}/></label><label>Average Price<input name="averagePrice" value={form.averagePrice} onChange={ch}/></label><label>Total Income<input name="totalIncome" value={form.totalIncome} onChange={ch}/></label><label>Soil Type<input name="soilType" value={form.soilType} onChange={ch}/></label><label>Soil pH<input name="soilPh" value={form.soilPh} onChange={ch}/></label><label className="wide">Notes<textarea name="notes" value={form.notes} onChange={ch}/></label><button className="submit small-submit">Save Crop Record</button></form><div className="simple-list crop-records">{records.map(r=><div key={r.id}><Leaf/><div><b>{r.cropName} • {r.year}</b><small>{r.areaAcres||0} acres • Yield {r.yieldAmount||0}</small><small>{r.soilType||"Soil not recorded"} • pH {r.soilPh||"-"}</small></div><span>₹{r.totalIncome||0}</span></div>)}</div></section>}
-
-function CropLive({t}){const [soil,setSoil]=useState("Loamy");const [ph,setPh]=useState("6.5");const [answer,setAnswer]=useState("");async function check(){try{const d=await apiRequest(`/crops/fertility?soilType=${encodeURIComponent(soil)}&ph=${encodeURIComponent(ph)}`);setAnswer(`${d.guidance} ${d.phNote||""}`)}catch(e){alert(e.message)}}return <section className="box crop"><div className="title"><h2>{t.cropInfo}</h2></div><div className="filters"><label>Soil<select value={soil} onChange={e=>setSoil(e.target.value)}><option>Loamy</option><option>Clay</option><option>Sandy</option></select></label><label>pH<input value={ph} onChange={e=>setPh(e.target.value)}/></label><button onClick={check}>{t.report}</button></div>{answer&&<div className="ai-answer">{answer}</div>}</section>}
 
 function TransportLive({t}){const [partners,setPartners]=useState([]);useEffect(()=>{apiRequest("/transport/partners").then(d=>setPartners(d.partners||[])).catch(e=>alert(e.message))},[]);return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Truck size={15}/>FarmBridge AI</span><h1>{t.transport}</h1><p>Available transport partners and rates.</p></div></div><div className="simple-list">{partners.map(p=><div key={p.id}><Truck/><div><b>{p.name}</b><small>{p.vehicleType} • {p.capacityKg} kg • {p.location}</small><small>{p.phone||"Phone not listed"}</small></div><strong>₹{p.price}</strong></div>)}</div></section>}
 
@@ -891,6 +1214,7 @@ function App(){
   },[]);
   const p={lang,setLang,go};
   if(page==="landing")return <Landing {...p}/>;
+  if(["about","features","how","contact"].includes(page))return <PublicPage page={page} {...p}/>;
   if(page==="consumer")return <Consumer {...p}/>;
   if(page==="consumerLogin")return <Auth role="consumer" mode="login" {...p}/>;
   if(page==="consumerRegister")return <Auth role="consumer" mode="register" {...p}/>;

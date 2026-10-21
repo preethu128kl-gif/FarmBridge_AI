@@ -52,11 +52,13 @@ The landing screen itself is frontend UI. Authentication and role-specific data 
 - Share order: POST `/api/orders/<id>/share`
 - Shared orders: GET `/api/orders/shared`
 
-## Important: this backend is not yet connected to the React frontend
+## Frontend integration
 
-The current React `main.jsx` contains demo/static product, order, farmer and dashboard values.
-This backend makes those features persistent. The next step is to replace those demo values
-with `fetch()`/Axios API calls from React.
+The React frontend uses this Flask API for authentication, products, cart,
+wishlist, checkout, orders, farmer tools, and the farming assistant. Product
+images uploaded by farmers are compressed in the browser and persisted in the
+existing PostgreSQL `products.image` text column. Product categories are inferred
+from recognized English/Kannada names; ambiguous names require a correction.
 
 ## PostgreSQL setup
 
@@ -129,8 +131,10 @@ For protected requests send:
 
     Authorization: Bearer YOUR_JWT_TOKEN
 
-The React frontend should store the returned token after login and attach it to
-protected API requests.
+The React frontend stores the returned token and attaches it to protected API
+requests. Passwords are stored as Werkzeug password hashes. Registration accepts
+name, email, mobile number, password, and role; login accepts email or mobile
+number plus password.
 
 ## Recommended React connection structure
 
@@ -154,14 +158,24 @@ For protected requests:
       }
     })
 
-## What this backend does not pretend to implement
+## AI assistant and Google sign-in
 
-The current frontend does not contain a real payment gateway, real map service,
-real external AI model, SMS/OTP verification, or image-upload storage.
-Therefore this backend does not invent those integrations.
+Set `GROQ_API_KEY` in `backend/.env` to enable Groq-backed farming answers for
+both signed-in consumers and farmers. The key is read only by Flask and must
+never be added to frontend environment variables. Without it, the existing
+local farming guidance remains available.
 
-The farming assistant endpoint is a safe rule-based starter. A real AI provider
-can be connected later.
+Google sign-in is not implemented or simulated. The frontend option remains
+disabled until a backend OAuth flow is configured. Create a Google OAuth 2.0
+Web client and register `http://localhost:5000/api/auth/google/callback` as its
+authorized redirect URI. Configure `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` in the backend environment, implement and test that
+callback, and only then enable the frontend option. Use the deployment's HTTPS
+callback URL outside local development. Never expose the client secret to the
+browser.
+
+This project also does not connect a real payment gateway, map service, or
+SMS/OTP provider; demo payments remain simulations.
 
 ## Production note
 

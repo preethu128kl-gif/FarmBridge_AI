@@ -1,6 +1,10 @@
 import os
 import json
 import uuid
+import base64
+import re
+import unicodedata
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -17,6 +21,7 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 if not DATABASE_URL:
@@ -270,6 +275,171 @@ def user_dict(u):
     }
 
 
+PRODUCT_CATEGORY_TERMS = {
+    "fruits": (
+        "apple", "orange", "grape", "banana", "mango", "papaya", "watermelon",
+        "pineapple", "lemon", "lime", "coconut", "dates", "guava", "jackfruit",
+        "pear", "peach", "plum", "pomegranate", "ಸೇಬು", "ಕಿತ್ತಳೆ", "ದ್ರಾಕ್ಷಿ",
+        "ಬಾಳೆಹಣ್ಣು", "ಬಾಳೆ", "ಮಾವು", "ಪಪ್ಪಾಯಿ", "ಕಲ್ಲಂಗಡಿ", "ಅನಾನಸ್",
+        "ನಿಂಬೆ", "ತೆಂಗಿನಕಾಯಿ", "ಪೇರಳೆ", "ಸೀತಾಫಲ",
+    ),
+    "vegetables": (
+        "tomato", "potato", "onion", "carrot", "cabbage", "cauliflower", "brinjal",
+        "eggplant", "aubergine", "okra", "ladyfinger", "bhindi", "cucumber", "beans",
+        "beetroot", "radish", "pumpkin", "spinach", "lettuce", "capsicum", "bell pepper",
+        "bottle gourd", "bitter gourd", "ridge gourd", "drumstick", "peas", "mushroom",
+        "ಟೊಮೇಟೊ", "ಟೊಮ್ಯಾಟೊ", "ಟೊಮೆಟೊ", "ಆಲೂಗಡ್ಡೆ", "ಈರುಳ್ಳಿ", "ಕ್ಯಾರೆಟ್",
+        "ಎಲೆಕೋಸು", "ಹೂಕೋಸು", "ಬದನೆಕಾಯಿ", "ಬೆಂಡೆಕಾಯಿ", "ಸೌತೆಕಾಯಿ", "ಬೀಟ್ರೂಟ್",
+        "ಮೂಲಂಗಿ", "ಕುಂಬಳಕಾಯಿ", "ಪಾಲಕ್", "ಅವರೆಕಾಯಿ", "ಬಟಾಣಿ", "ಸೊರೆಕಾಯಿ",
+    ),
+    "grains": (
+        "rice", "wheat", "maize", "corn", "millet", "bajra", "jowar", "sorghum",
+        "ragi", "finger millet", "barley", "oats", "quinoa", "lentil", "dal",
+        "chickpea", "gram", "beans", "peanut", "groundnut", "soybean", "cowpea",
+        "ಅಕ್ಕಿ", "ಗೋಧಿ", "ಮೆಕ್ಕೆಜೋಳ", "ಜೋಳ", "ರಾಗಿ", "ಸಜ್ಜೆ", "ಬಾರ್ಲಿ", "ಅವರೆ",
+        "ಕಡಲೆ", "ಹೆಸರುಕಾಳು", "ತೊಗರಿ", "ಉದ್ದು", "ಕಡಲೆಕಾಯಿ",
+    ),
+    "spices": (
+        "chilli", "chili", "pepper", "turmeric", "ginger", "garlic", "cumin",
+        "coriander", "cardamom", "cinnamon", "clove", "mustard", "fennel",
+        "fenugreek", "nutmeg", "saffron", "ajwain", "tamarind", "ಮೆಣಸಿನಕಾಯಿ",
+        "ಅರಿಶಿನ", "ಶುಂಠಿ", "ಬೆಳ್ಳುಳ್ಳಿ", "ಜೀರಿಗೆ", "ಕೊತ್ತಂಬರಿ", "ಏಲಕ್ಕಿ",
+        "ದಾಲ್ಚಿನ್ನಿ", "ಲವಂಗ", "ಸಾಸಿವೆ", "ಮೆಂತ್ಯ", "ಹುಣಸೆ",
+    ),
+    "dairy": (
+        "milk", "egg", "eggs", "cheese", "butter", "yogurt", "curd", "paneer",
+        "ghee", "ಹಾಲು", "ಮೊಟ್ಟೆ", "ಬೆಣ್ಣೆ", "ಮೊಸರು", "ತುಪ್ಪ",
+    ),
+    "oils": (
+        "oil", "sunflower oil", "coconut oil", "groundnut oil", "sesame oil",
+        "ಎಣ್ಣೆ", "ತೆಂಗಿನ ಎಣ್ಣೆ",
+    ),
+    "flowers": (
+        "flower", "rose", "jasmine", "marigold", "hibiscus", "lotus", "ಚೆಂಡುಹೂವು",
+        "ಮಲ್ಲಿಗೆ", "ಗುಲಾಬಿ", "ದಾಸವಾಳ", "ಕಮಲ",
+    ),
+    "herbal": (
+        "herb", "aloe vera", "neem", "mint", "basil", "lemongrass", "curry leaves",
+        "ಔಷಧಿ", "ಅಲೋವೆರಾ", "ಬೇವಿನ", "ಪುದೀನ", "ತುಳಸಿ", "ಕರಿಬೇವು",
+    ),
+}
+PRODUCT_CATEGORIES = frozenset((*PRODUCT_CATEGORY_TERMS, "organic"))
+PRODUCT_CATEGORY_ALIASES = {
+    category: {normalize for normalize in terms}
+    for category, terms in PRODUCT_CATEGORY_TERMS.items()
+}
+PRODUCT_CATEGORY_ALIASES["organic"] = {"organic", "ಸಾವಯವ"}
+
+
+def normalize_product_text(value):
+    value = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    value = re.sub(r"[_-]+", " ", value)
+    value = "".join(
+        char if char.isalnum() or unicodedata.category(char).startswith("M") or char.isspace() else " "
+        for char in value
+    )
+    return " ".join(value.split())
+
+
+PRODUCT_CATEGORY_ALIASES = {
+    category: {normalize_product_text(term) for term in terms}
+    for category, terms in PRODUCT_CATEGORY_ALIASES.items()
+}
+
+
+def singular_product_word(word):
+    if re.search(r"[a-z]", word):
+        if word.endswith("ies") and len(word) > 4:
+            return word[:-3] + "y"
+        if word.endswith("oes") and len(word) > 4:
+            return word[:-2]
+        if word.endswith("s") and not word.endswith(("ss", "us")) and len(word) > 3:
+            return word[:-1]
+    return word
+
+
+def infer_product_category(name):
+    normalized = normalize_product_text(name)
+    if not normalized:
+        return None
+
+    full_categories = {
+        category
+        for category, terms in PRODUCT_CATEGORY_ALIASES.items()
+        if normalized in terms
+    }
+    if len(full_categories) == 1:
+        return next(iter(full_categories))
+
+    candidates = [normalized]
+    for word in normalized.split():
+        candidates.extend((word, singular_product_word(word)))
+    exact_categories = {
+        category
+        for category, terms in PRODUCT_CATEGORY_ALIASES.items()
+        if any(candidate in terms for candidate in candidates)
+    }
+    if "organic" in exact_categories and len(exact_categories) > 1:
+        return "organic"
+    exact_categories.discard("organic")
+    if len(exact_categories) == 1:
+        return next(iter(exact_categories))
+    if exact_categories:
+        return None
+
+    fuzzy_inputs = [candidate for candidate in candidates if len(candidate) >= 4]
+    best_by_category = {
+        category: max(
+            (
+                SequenceMatcher(None, candidate, term).ratio()
+                for candidate in fuzzy_inputs
+                for term in terms
+                if len(term) >= 4
+            ),
+            default=0,
+        )
+        for category, terms in PRODUCT_CATEGORY_ALIASES.items()
+    }
+    ranked = sorted(best_by_category.items(), key=lambda item: item[1], reverse=True)
+    if not ranked or ranked[0][1] < 0.82:
+        return None
+    if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < 0.04:
+        return None
+    return ranked[0][0]
+
+
+def validate_product_image(image):
+    if image is None or image == "":
+        return None
+    if not isinstance(image, str) or len(image) > 3_500_000:
+        return "Product images must be no larger than 2.5 MB after compression."
+    if not image.startswith("data:"):
+        return None
+
+    match = re.fullmatch(
+        r"data:image/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})",
+        image,
+        re.IGNORECASE,
+    )
+    if not match:
+        return "Upload a valid JPEG, PNG, or WebP image."
+    try:
+        content = base64.b64decode(match.group(2), validate=True)
+    except ValueError:
+        return "Upload a valid JPEG, PNG, or WebP image."
+    image_type = match.group(1).lower()
+    signatures = {
+        "jpeg": content.startswith(b"\xff\xd8\xff"),
+        "png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+        "webp": content.startswith(b"RIFF") and content[8:12] == b"WEBP",
+    }
+    if not signatures[image_type]:
+        return "Upload a valid JPEG, PNG, or WebP image."
+    if len(content) > 2_500_000:
+        return "Product images must be no larger than 2.5 MB after compression."
+    return None
+
+
 def product_dict(p):
     return {
         "id": p.id,
@@ -502,22 +672,29 @@ def register():
     name = (data.get("name") or "").strip()
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
+    phone = re.sub(r"[\s()-]", "", str(data.get("phone") or ""))
     role = (data.get("role") or "consumer").lower()
 
     if not name or not email or not password:
         return jsonify({"error": "name, email and password are required"}), 400
+    if len(name) > 120 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        return jsonify({"error": "Enter a valid name and email address"}), 400
+    if phone and not re.fullmatch(r"\+?[0-9]{7,15}", phone):
+        return jsonify({"error": "Enter a valid mobile number"}), 400
     if role not in ("consumer", "farmer"):
         return jsonify({"error": "role must be consumer or farmer"}), 400
     if len(password) < 6:
         return jsonify({"error": "password must contain at least 6 characters"}), 400
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "email already registered"}), 409
+    if phone and User.query.filter_by(phone=phone).first():
+        return jsonify({"error": "mobile number already registered"}), 409
 
     user = User(
         name=name,
         email=email,
         password_hash=generate_password_hash(password),
-        phone=data.get("phone"),
+        phone=phone or None,
         role=role,
         location=data.get("location"),
         farm_name=data.get("farmName"),
@@ -545,11 +722,16 @@ def register():
 @app.post("/api/auth/login")
 def login():
     data = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
+    identifier = (data.get("email") or data.get("identifier") or "").strip()
     password = data.get("password") or ""
     requested_role = (data.get("role") or "").lower()
 
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter_by(email=identifier.lower()).first()
+    if not user:
+        phone = re.sub(r"[\s()-]", "", identifier)
+        user = User.query.filter_by(phone=phone).first()
+        if not user and phone != identifier:
+            user = User.query.filter_by(phone=identifier).first()
     if not user or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "Invalid email or password"}), 401
     if requested_role and requested_role != user.role:
@@ -718,13 +900,28 @@ def farmer_products():
 @role_required("farmer")
 def create_product():
     data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "").strip()
+    supplied_category = str(data.get("category") or "").strip().casefold()
+    category = (
+        supplied_category
+        if supplied_category in PRODUCT_CATEGORIES
+        else infer_product_category(name)
+    )
 
-    if not data.get("name") or not data.get("category") or data.get("price") is None:
-        return jsonify({"error": "name, category and price are required"}), 400
+    if not name or data.get("price") is None:
+        return jsonify({"error": "name and price are required"}), 400
+    if not category:
+        return jsonify({
+            "error": "Could not confidently categorize this product. Please choose its consumer category.",
+            "categoryRequired": True,
+        }), 400
+    image_error = validate_product_image(data.get("image"))
+    if image_error:
+        return jsonify({"error": image_error}), 400
 
     p = Product(
-        name=str(data["name"]).strip(),
-        category=str(data["category"]).strip(),
+        name=name,
+        category=category,
         description=data.get("description", ""),
         price=float(data["price"]),
         unit=data.get("unit", "kg"),
@@ -751,6 +948,10 @@ def update_product(product_id):
         return jsonify({"error": "Product not found"}), 404
 
     data = request.get_json(silent=True) or {}
+    if "image" in data:
+        image_error = validate_product_image(data["image"])
+        if image_error:
+            return jsonify({"error": image_error}), 400
 
     text_fields = ["name", "category", "description", "unit", "image", "location"]
     for field in text_fields:
@@ -1278,40 +1479,6 @@ def crop_summary():
     })
 
 
-@app.get("/api/crops/fertility")
-@role_required("farmer")
-def fertility_info():
-    soil = (request.args.get("soilType") or "").lower()
-    ph = request.args.get("ph")
-
-    guidance = {
-        "general": "Use a soil test before deciding fertilizer quantity. Maintain organic matter and avoid over-application.",
-        "loamy": "Loamy soil is generally suitable for many crops. Maintain organic matter and monitor drainage.",
-        "clay": "Improve drainage and organic matter. Avoid excessive irrigation when the soil remains wet.",
-        "sandy": "Use organic matter and split nutrient applications because sandy soil can lose nutrients quickly."
-    }
-
-    answer = guidance["general"]
-    for key in ("loamy", "clay", "sandy"):
-        if key in soil:
-            answer = guidance[key]
-
-    ph_note = ""
-    if ph:
-        try:
-            value = float(ph)
-            if value < 5.5:
-                ph_note = "The supplied pH is acidic; crop-specific liming decisions should follow a soil test."
-            elif value > 7.5:
-                ph_note = "The supplied pH is alkaline; nutrient availability should be checked with a soil test."
-            else:
-                ph_note = "The supplied pH is within a commonly useful range for many crops."
-        except ValueError:
-            pass
-
-    return jsonify({"soilType": soil, "ph": ph, "guidance": answer, "phNote": ph_note})
-
-
 # ============================================================
 # FARMING AI ASSISTANT
 # ============================================================
@@ -1792,6 +1959,11 @@ def seed_demo():
 @app.errorhandler(404)
 def not_found(_):
     return jsonify({"error": "API route not found"}), 404
+
+
+@app.errorhandler(413)
+def request_too_large(_):
+    return jsonify({"error": "Request is too large. Compress the product image and try again."}), 413
 
 
 @app.errorhandler(500)

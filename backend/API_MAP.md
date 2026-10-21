@@ -8,6 +8,10 @@ Landing role buttons
 → route to login/register
 → POST `/api/auth/login` or `/api/auth/register`
 
+Consumer AI assistant
+→ POST `/api/ai/farming-assistant` using the signed-in user's JWT
+→ reuses the Groq configuration shared with the farmer assistant
+
 Consumer search box
 → GET `/api/products?search=<query>`
 
@@ -60,6 +64,10 @@ My Products
 
 Add Product form
 → POST `/api/products`
+→ category is inferred from supported English/Kannada product names; an uncertain
+  product requires an explicit category correction
+→ optional compressed JPEG/PNG/WebP image is stored in PostgreSQL's existing
+  `products.image` text column and returned as both `image` and `image_url`
 
 Edit Product
 → PUT `/api/products/<id>`
@@ -99,9 +107,6 @@ Save crop record
 Crop report
 → GET `/api/crops/summary`
 
-Fertility
-→ GET `/api/crops/fertility?soilType=Loamy&ph=6.5`
-
 Transport Partners
 → GET `/api/transport/partners`
 
@@ -120,3 +125,14 @@ Profile
 
 Logout
 → frontend removes JWT token and returns to landing.
+
+## Google sign-in
+
+Google OAuth is intentionally not enabled or simulated. The frontend displays a
+disabled, clearly labelled integration point. To enable it, configure a Google
+OAuth 2.0 Web client with the authorized redirect URI
+`http://localhost:5000/api/auth/google/callback`, provide its client ID and
+secret to the backend as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, and
+implement/enable the backend callback before making the frontend option active.
+For deployment, use the HTTPS callback registered for that deployment. Never
+put the client secret in frontend environment variables.

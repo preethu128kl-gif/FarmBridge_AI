@@ -22,6 +22,11 @@ Default language is Kannada. Use the language button to switch Kannada → Engli
 - Login/Register screens with back navigation
 - Consumer search filters products
 - Consumer category navigation opens category-specific product views
+- Product names and descriptions preserve English or Kannada text; categories are inferred safely from known product names
+- Farmer product images are compressed, validated, and stored by the PostgreSQL backend
+- About, Features, How It Works, and Contact navigation pages
 - Add to Cart / Buy Now routes to Consumer Login
-- Farmer sidebar opens Dashboard, My Products, Add Product, Orders, Deliveries, AI Assistant, Crop/Fertility, Previous Year Data, Transport, Matching, Earnings and Profile views
+- Consumer and Farmer AI assistants reuse the secured backend Groq integration
+- Farmer sidebar opens Dashboard, My Products, Add Product, Orders, Deliveries, AI Assistant, Previous Year Data, Transport, Matching, Earnings and Profile views
 - Farmer logout returns to the starting interface
+- Google sign-in is clearly marked unavailable until backend OAuth credentials and callback are configured; see `../backend/README.md`
