@@ -96,7 +96,9 @@ body:
 → DELETE `/api/ai/conversations/<id>` to remove a conversation
 
 Set `GROQ_API_KEY` in `backend/.env` to enable Groq responses. The key is only
-read by Flask; without it, the existing local farming guidance remains available.
+read by Flask; without it, the endpoint returns a configuration error instead
+of presenting canned text as an AI response. Pass `uiLanguage` as `en` or `kn`
+to follow the active site language when a message's language is otherwise ambiguous.
 
 Previous Year Data
 → GET `/api/crops/previous-year`
@@ -113,8 +115,17 @@ Transport Partners
 Transport Matching
 → POST `/api/transport/match`
 
-Assign Transport
-→ POST `/api/orders/<id>/transport`
+Transport Requests
+→ created automatically in PostgreSQL during consumer checkout
+→ eligible delivery partners poll `GET /api/partner/requests`
+→ assigned partner accepts through `POST /api/partner/requests/<id>/accept`
+→ a participant may retry matching with `POST /api/orders/<id>/transport/retry`
+→ partner request expires after 24 hours if not accepted
+
+Pickup radius and per-kilometre pricing use farmer and partner coordinates.
+Farmers enter pickup coordinates in Profile; partners enter service base
+coordinates during registration. When coordinates or distance are unavailable,
+radius-bound partners are not matched and the fare is left unavailable.
 
 Shared Orders
 → POST `/api/orders/<id>/share`
@@ -128,11 +139,10 @@ Logout
 
 ## Google sign-in
 
-Google OAuth is intentionally not enabled or simulated. The frontend displays a
-disabled, clearly labelled integration point. To enable it, configure a Google
-OAuth 2.0 Web client with the authorized redirect URI
-`http://localhost:5000/api/auth/google/callback`, provide its client ID and
-secret to the backend as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, and
-implement/enable the backend callback before making the frontend option active.
-For deployment, use the HTTPS callback registered for that deployment. Never
-put the client secret in frontend environment variables.
+Google Identity Services sends an ID token to `POST /api/auth/google`. Flask
+verifies its signature using Google's published keys and checks the audience,
+issuer and verified email before creating a FarmBridge session. Set the same
+Google OAuth Web client ID as `GOOGLE_CLIENT_ID` in `backend/.env` and
+`VITE_GOOGLE_CLIENT_ID` in `frontend/.env`; add the frontend host to the OAuth
+client's authorized JavaScript origins. This flow does not use a redirect
+callback or require a client secret. Keep the backend `JWT_SECRET_KEY` private.

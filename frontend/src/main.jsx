@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "./api";
 import FarmingAssistant from "./FarmingAssistant";
+import TransportPartnerPortal from "./TransportPartnerPortal";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft, ArrowRight, Bell, Boxes, Check, ChevronDown, Globe2, Heart,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import "./PaymentDemo.css";
+import "./FarmerSales.css";
 
 import landingFarm from "./assets/landing-farm.jpg";
 import consumerHero from "./assets/consumer-hero.jpg";
@@ -58,9 +60,33 @@ const productImageAliases = {
   ಬಾಳೆ: "banana",
   ಮಾವು: "mango",
   "bell pepper": "capsicum",
+  "sweet pepper": "capsicum",
+  "green pepper": "capsicum",
   eggplant: "brinjal",
+  aubergine: "brinjal",
+  okra: "okra",
+  ladyfinger: "okra",
+  bhindi: "okra",
+  cilantro: "coriander leaves",
+  coriander: "coriander leaves",
+  "coriander leaf": "coriander leaves",
+  "spring onion": "onion",
+  "spring onions": "onion",
   "green chili": "green chilli",
   "green chilies": "green chilli",
+  "green chillies": "green chilli",
+  "red chili": "dry red chilli",
+  "red chillies": "dry red chilli",
+  "red chilies": "dry red chilli",
+  "chili powder": "dry red chilli",
+  "chilli powder": "dry red chilli",
+  "sweet potato": "sweet potato",
+  "finger millet": "ragi",
+  sorghum: "jowar",
+  "pearl millet": "bajra",
+  "chick pea": "chickpeas",
+  chickpeas: "chickpeas",
+  "ground nuts": "groundnut",
 };
 const productImagePlaceholder = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#f4f7f2"/><path d="M256 367c-39-63-38-137 4-211 42 74 43 148 4 211m-5-48c-42-44-91-58-147-43 38 57 87 74 147 56m10-13c40-42 88-56 143-41-37 55-84 71-143 54" fill="none" stroke="#82a779" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/></svg>'
@@ -112,18 +138,9 @@ function findProductLibraryImage(name) {
     if (productImages[alias]) return productImages[alias];
   }
 
-  const ranked = Object.keys(productImages)
-    .filter(candidate => candidate.length >= 4)
-    .map(candidate => {
-      const score = Math.max(...candidates.map(value =>
-        1 - editDistance(value, candidate) / Math.max(value.length, candidate.length)
-      ));
-      return { candidate, score };
-    })
-    .sort((left, right) => right.score - left.score);
-  if (!ranked.length || ranked[0].score < 0.82) return productImagePlaceholder;
-  if (ranked[1] && ranked[0].score - ranked[1].score < 0.04) return productImagePlaceholder;
-  return productImages[ranked[0].candidate] || productImagePlaceholder;
+  // A close spelling can still be a different crop (for example, chilli and
+  // chilli leaves). Only use an exact library name or an explicit synonym.
+  return productImagePlaceholder;
 }
 
 function productImage(product) {
@@ -168,19 +185,20 @@ const T = {
     fertilizer:"ಟೊಮ್ಯಾಟೊಗೆ ಯಾವ ರಸಗೊಬ್ಬರ ಉತ್ತಮ?", leafSpot:"ಮೆಣಸಿನಕಾಯಿಯಲ್ಲಿ ಎಲೆ ಚುಕ್ಕೆ ನಿಯಂತ್ರಿಸುವುದು ಹೇಗೆ?", soil:"ಮಣ್ಣಿನ ಫಲವತ್ತತೆಯನ್ನು ಹೇಗೆ ಸುಧಾರಿಸುವುದು?", maize:"ಮೆಕ್ಕೆಜೋಳ ಬಿತ್ತಲು ಉತ್ತಮ ಸಮಯ?", question:"ನಿಮ್ಮ ಪ್ರಶ್ನೆಯನ್ನು ಟೈಪ್ ಮಾಡಿ...",
     addCart:"ಕಾರ್ಟ್‌ಗೆ ಸೇರಿಸಿ", buy:"ಖರೀದಿಸಿ", shopNow:"ಈಗ ಖರೀದಿಸಿ", direct:"ರೈತರಿಂದ ನೇರವಾಗಿ", quality2:"ತಾಜಾ ಮತ್ತು ಗುಣಮಟ್ಟ", fast:"ವೇಗದ ವಿತರಣೆ", payment:"ಸುರಕ್ಷಿತ ಪಾವತಿ", returns:"ಸುಲಭ ರಿಟರ್ನ್", noMiddle:"ಮಧ್ಯವರ್ತಿಗಳಿಲ್ಲ", combo:"ಕಾಂಬೋ ಡೀಲ್", free:"ಉಚಿತ ವಿತರಣೆ", best:"ಅತ್ಯುತ್ತಮ ಬೆಲೆ",
     login:"ಲಾಗಿನ್", register:"ನೋಂದಣಿ", email:"ಇಮೇಲ್ / ಮೊಬೈಲ್", password:"ಪಾಸ್‌ವರ್ಡ್", name:"ಹೆಸರು", create:"ಖಾತೆ ರಚಿಸಿ", back:"ಹಿಂದಕ್ಕೆ", welcome:"ಮತ್ತೆ ಸ್ವಾಗತ", loginHint:"ನಿಮ್ಮ ಖಾತೆಗೆ ಮುಂದುವರಿಯಿರಿ", registerHint:"ಹೊಸ ಖಾತೆ ರಚಿಸಿ", noAccount:"ಖಾತೆ ಇಲ್ಲವೇ?", haveAccount:"ಈಗಾಗಲೇ ಖಾತೆ ಇದೆಯೇ?", demo:"ಡೆಮೊಗಾಗಿ ಯಾವುದೇ ವಿವರಗಳನ್ನು ಬಳಸಿ.",
-    dashboard:"ಡ್ಯಾಶ್‌ಬೋರ್ಡ್", products:"ನನ್ನ ಉತ್ಪನ್ನಗಳು", addProduct:"ಆಡ್ ಪ್ರಾಡಕ್ಟ್", myOrders:"ಆರ್ಡರ್‌ಗಳು", deliveries:"ನನ್ನ ವಿತರಣೆಗಳು", cropInfo:"ಬೆಳೆ ಮತ್ತು ಫಲವತ್ತತೆ ಮಾಹಿತಿ", previous:"ಹಿಂದಿನ ವರ್ಷದ ಡೇಟಾ", transport:"ಸಾರಿಗೆ ಪಾಲುದಾರರು", matching:"ಸಾರಿಗೆ ಹೊಂದಾಣಿಕೆ", earnings:"ಆದಾಯ", profile:"ಪ್ರೊಫೈಲ್", logout:"ಲಾಗ್‌ಔಟ್", popular:"ಜನಪ್ರಿಯ ವರ್ಗಗಳು", available:"ಲಭ್ಯವಿರುವ ಉತ್ಪನ್ನಗಳು", cropData:"ಹಿಂದಿನ ವರ್ಷದ ಬೆಳೆ ಡೇಟಾ", selectCrop:"ಬೆಳೆ ಆಯ್ಕೆ ಮಾಡಿ", selectYear:"ವರ್ಷ ಆಯ್ಕೆ ಮಾಡಿ", report:"ವರದಿ ನೋಡಿ", avgYield:"ಸರಾಸರಿ ಇಳುವರಿ", avgPrice:"ಸರಾಸರಿ ಬೆಲೆ", production:"ಒಟ್ಟು ಉತ್ಪಾದನೆ", income:"ಒಟ್ಟು ಆದಾಯ", detailed:"ವಿವರವಾದ ವರದಿ", transportPartners:"ಸಾರಿಗೆ ಪಾಲುದಾರರು", transportMatch:"AI ಆಧಾರಿತ ಸಾರಿಗೆ ಹೊಂದಾಣಿಕೆ", assign:"ಸಾರಿಗೆ ನಿಯೋಜಿಸಿ", shared:"ಈ ಆರ್ಡರ್ ಅನ್ನು ಇನ್ನೊಬ್ಬ ರೈತನೊಂದಿಗೆ ಹಂಚಬಹುದು.", ordersTracking:"ನನ್ನ ಆರ್ಡರ್‌ಗಳು ಮತ್ತು ವಿತರಣೆ ಟ್ರ್ಯಾಕಿಂಗ್", placed:"ಆರ್ಡರ್ ಮಾಡಿದ", confirmed:"ದೃಢೀಕರಿಸಲಾಗಿದೆ", assigned:"ಸಾರಿಗೆ ನಿಯೋಜಿಸಲಾಗಿದೆ", out:"ವಿತರಣೆಗೆ ಹೊರಟಿದೆ", delivered:"ವಿತರಿಸಲಾಗಿದೆ", select:"ಆಯ್ಕೆ", availableYes:"ಲಭ್ಯವಿದೆ", from:"ಇಂದ", to:"ಗೆ", totalWeight:"ಒಟ್ಟು ತೂಕ", deliveryDate:"ವಿತರಣಾ ದಿನಾಂಕ", viewShared:"ಹಂಚಿದ ಆರ್ಡರ್‌ಗಳನ್ನು ನೋಡಿ"
+    dashboard:"ಡ್ಯಾಶ್‌ಬೋರ್ಡ್", products:"ನನ್ನ ಉತ್ಪನ್ನಗಳು", addProduct:"ಆಡ್ ಪ್ರಾಡಕ್ಟ್", myOrders:"ಆರ್ಡರ್‌ಗಳು", deliveries:"ನನ್ನ ವಿತರಣೆಗಳು", previous:"ಹಿಂದಿನ ವರ್ಷದ ಬೆಳೆ ವಿವರಗಳು", transport:"ಸಾರಿಗೆ ಪಾಲುದಾರರು", matching:"ಸಾರಿಗೆ ಹೊಂದಾಣಿಕೆ", earnings:"ಆದಾಯ", profile:"ಪ್ರೊಫೈಲ್", logout:"ಲಾಗ್‌ಔಟ್", popular:"ಜನಪ್ರಿಯ ವರ್ಗಗಳು", available:"ಲಭ್ಯವಿರುವ ಉತ್ಪನ್ನಗಳು", cropData:"ಹಿಂದಿನ ವರ್ಷದ ಬೆಳೆ ಡೇಟಾ", selectCrop:"ಬೆಳೆ ಆಯ್ಕೆ ಮಾಡಿ", selectYear:"ವರ್ಷ ಆಯ್ಕೆ ಮಾಡಿ", report:"ವರದಿ ನೋಡಿ", avgYield:"ಸರಾಸರಿ ಇಳುವರಿ", avgPrice:"ಸರಾಸರಿ ಬೆಲೆ", production:"ಒಟ್ಟು ಉತ್ಪಾದನೆ", income:"ಒಟ್ಟು ಆದಾಯ", detailed:"ವಿವರವಾದ ವರದಿ", transportPartners:"ಸಾರಿಗೆ ಪಾಲುದಾರರು", transportMatch:"AI ಆಧಾರಿತ ಸಾರಿಗೆ ಹೊಂದಾಣಿಕೆ", assign:"ಸಾರಿಗೆ ನಿಯೋಜಿಸಿ", shared:"ಈ ಆರ್ಡರ್ ಅನ್ನು ಇನ್ನೊಬ್ಬ ರೈತನೊಂದಿಗೆ ಹಂಚಬಹುದು.", ordersTracking:"ನನ್ನ ಆರ್ಡರ್‌ಗಳು ಮತ್ತು ವಿತರಣೆ ಟ್ರ್ಯಾಕಿಂಗ್", placed:"ಆರ್ಡರ್ ಮಾಡಿದ", confirmed:"ದೃಢೀಕರಿಸಲಾಗಿದೆ", assigned:"ಸಾರಿಗೆ ನಿಯೋಜಿಸಲಾಗಿದೆ", out:"ವಿತರಣೆಗೆ ಹೊರಟಿದೆ", delivered:"ವಿತರಿಸಲಾಗಿದೆ", select:"ಆಯ್ಕೆ", availableYes:"ಲಭ್ಯವಿದೆ", from:"ಇಂದ", to:"ಗೆ", totalWeight:"ಒಟ್ಟು ತೂಕ", deliveryDate:"ವಿತರಣಾ ದಿನಾಂಕ", viewShared:"ಹಂಚಿದ ಆರ್ಡರ್‌ಗಳನ್ನು ನೋಡಿ"
   },
   en: {}
 };
 T.en = {
-  home:"Home", about:"About Us", features:"Features", how:"How It Works", contact:"Contact", english:"English", kannada:"ಕನ್ನಡ", fresh:"Fresh. Local. Reliable.", bringing:"Bringing Farms", closer:"Closer to You", choose:"Choose your journey with us and experience the best of farming.", consumer:"Consumer", farmer:"Farmer", consumerDesc:"Shop fresh produce directly from farmers", farmerDesc:"Manage your farm, list products & grow your business", continueConsumer:"Continue as Consumer", continueFarmer:"Continue as Farmer", freshHealthy:"Fresh & Healthy", natural:"100% Natural Produce", supportLocal:"Support Local", empower:"Empowering Farmers", safe:"Safe & Reliable", quality:"Quality You Can Trust", aiPowered:"AI Powered", smart:"Smart Farming Solutions", search:"Search for products, farmers, categories...", deliver:"Deliver to", location:"Bangalore, Karnataka", categories:"All Categories", shopCategory:"Shop by Category", vegetables:"Fresh Vegetables", fruits:"Fruits", grains:"Grains & Pulses", spices:"Spices & Masalas", dairy:"Dairy & Eggs", oils:"Oils & Ghee", organic:"Organic Products", flowers:"Flower & Leaves", herbal:"Herbal & Natural", recommended:"Recommended for You", viewAll:"View All", orders:"My Orders", track:"Track Your Order", orderId:"Enter Order ID", trackBtn:"Track", assistant:"AI Farming Assistant", ask:"Ask me anything about farming, crops, fertilizers, diseases, soil, and more.", fertilizer:"Which fertilizer is best for tomatoes?", leafSpot:"How to control leaf spot in chili?", soil:"How to improve soil fertility?", maize:"Best time to sow maize?", question:"Type your question...", addCart:"Add to Cart", buy:"Buy Now", shopNow:"Shop Now", direct:"Direct from Farmers", quality2:"Fresh & Quality", fast:"Fast Delivery", payment:"Secure Payment", returns:"Easy Returns", noMiddle:"No Middlemen", combo:"Combo Deal", free:"Free Delivery", best:"Best Prices", login:"Login", register:"Register", email:"Email / Mobile", password:"Password", name:"Name", create:"Create Account", back:"Back", welcome:"Welcome Back", loginHint:"Continue to your account", registerHint:"Create your new account", noAccount:"Don't have an account?", haveAccount:"Already have an account?", demo:"Use any details for demo.", dashboard:"Dashboard", products:"My Products", addProduct:"Add Product", myOrders:"Orders", deliveries:"My Deliveries", cropInfo:"Crop & Fertility Info", previous:"Previous Year Data", transport:"Transport Partners", matching:"Transport Matching", earnings:"Earnings", profile:"Profile", logout:"Logout", popular:"Popular Categories", available:"Available Products", cropData:"Previous Year Crop Data", selectCrop:"Select Crop", selectYear:"Select Year", report:"View Report", avgYield:"Average Yield", avgPrice:"Average Price", production:"Total Production", income:"Total Income", detailed:"View Detailed Report", transportPartners:"Transport Partners", transportMatch:"Transport Matching (AI Powered)", assign:"Assign Transport", shared:"This order can be shared with 1 more farmer.", ordersTracking:"My Orders & Delivery Tracking", placed:"Order Placed", confirmed:"Confirmed", assigned:"Transport Assigned", out:"Out for Delivery", delivered:"Delivered", select:"Select", availableYes:"Available", from:"From", to:"To", totalWeight:"Total Weight", deliveryDate:"Delivery Date", viewShared:"View Shared Orders"
+  home:"Home", about:"About Us", features:"Features", how:"How It Works", contact:"Contact", english:"English", kannada:"ಕನ್ನಡ", fresh:"Fresh. Local. Reliable.", bringing:"Bringing Farms", closer:"Closer to You", choose:"Choose your journey with us and experience the best of farming.", consumer:"Consumer", farmer:"Farmer", consumerDesc:"Shop fresh produce directly from farmers", farmerDesc:"Manage your farm, list products & grow your business", continueConsumer:"Continue as Consumer", continueFarmer:"Continue as Farmer", freshHealthy:"Fresh & Healthy", natural:"100% Natural Produce", supportLocal:"Support Local", empower:"Empowering Farmers", safe:"Safe & Reliable", quality:"Quality You Can Trust", aiPowered:"AI Powered", smart:"Smart Farming Solutions", search:"Search for products, farmers, categories...", deliver:"Deliver to", location:"Bangalore, Karnataka", categories:"All Categories", shopCategory:"Shop by Category", vegetables:"Fresh Vegetables", fruits:"Fruits", grains:"Grains & Pulses", spices:"Spices & Masalas", dairy:"Dairy & Eggs", oils:"Oils & Ghee", organic:"Organic Products", flowers:"Flower & Leaves", herbal:"Herbal & Natural", recommended:"Recommended for You", viewAll:"View All", orders:"My Orders", track:"Track Your Order", orderId:"Enter Order ID", trackBtn:"Track", assistant:"AI Farming Assistant", ask:"Ask me anything about farming, crops, fertilizers, diseases, soil, and more.", fertilizer:"Which fertilizer is best for tomatoes?", leafSpot:"How to control leaf spot in chili?", soil:"How to improve soil fertility?", maize:"Best time to sow maize?", question:"Type your question...", addCart:"Add to Cart", buy:"Buy Now", shopNow:"Shop Now", direct:"Direct from Farmers", quality2:"Fresh & Quality", fast:"Fast Delivery", payment:"Secure Payment", returns:"Easy Returns", noMiddle:"No Middlemen", combo:"Combo Deal", free:"Free Delivery", best:"Best Prices", login:"Login", register:"Register", email:"Email / Mobile", password:"Password", name:"Name", create:"Create Account", back:"Back", welcome:"Welcome Back", loginHint:"Continue to your account", registerHint:"Create your new account", noAccount:"Don't have an account?", haveAccount:"Already have an account?", demo:"Use any details for demo.", dashboard:"Dashboard", products:"My Products", addProduct:"Add Product", myOrders:"Orders", deliveries:"My Deliveries", previous:"Previous Year Crop Details", transport:"Transport Partners", matching:"Transport Matching", earnings:"Earnings", profile:"Profile", logout:"Logout", popular:"Popular Categories", available:"Available Products", cropData:"Previous Year Crop Data", selectCrop:"Select Crop", selectYear:"Select Year", report:"View Report", avgYield:"Average Yield", avgPrice:"Average Price", production:"Total Production", income:"Total Income", detailed:"View Detailed Report", transportPartners:"Transport Partners", transportMatch:"Transport Matching (AI Powered)", assign:"Assign Transport", shared:"This order can be shared with 1 more farmer.", ordersTracking:"My Orders & Delivery Tracking", placed:"Order Placed", confirmed:"Confirmed", assigned:"Transport Assigned", out:"Out for Delivery", delivered:"Delivered", select:"Select", availableYes:"Available", from:"From", to:"To", totalWeight:"Total Weight", deliveryDate:"Delivery Date", viewShared:"View Shared Orders"
 };
 Object.assign(T.kn, {
-  productName:"ಉತ್ಪನ್ನದ ಹೆಸರು", description:"ವಿವರಣೆ", price:"ಬೆಲೆ", stock:"ದಾಸ್ತಾನು", unit:"ಘಟಕ",
+  productName:"ಉತ್ಪನ್ನದ ಹೆಸರು", description:"ವಿವರಣೆ", price:"ಬೆಲೆ", stock:"ಪ್ರಮಾಣ", unit:"ಘಟಕ",
   imageUpload:"ಉತ್ಪನ್ನದ ಚಿತ್ರ (ಐಚ್ಛಿಕ)", imageHint:"JPEG, PNG ಅಥವಾ WebP; ಗರಿಷ್ಠ 8 MB. ಚಿತ್ರವನ್ನು ಸ್ವಯಂಚಾಲಿತವಾಗಿ ಸಂಕುಚಿತಗೊಳಿಸಲಾಗುತ್ತದೆ.",
-  removeImage:"ಚಿತ್ರ ತೆಗೆದುಹಾಕಿ", categoryCorrection:"ವರ್ಗವನ್ನು ಆಯ್ಕೆಮಾಡಿ", categoryCorrectionHint:"ಈ ಉತ್ಪನ್ನದ ವರ್ಗವನ್ನು ಖಚಿತಪಡಿಸಲು ದಯವಿಟ್ಟು ಒಂದನ್ನು ಆಯ್ಕೆಮಾಡಿ.",
+  removeImage:"ಚಿತ್ರ ತೆಗೆದುಹಾಕಿ", categoryCorrectionHint:"ವರ್ಗವನ್ನು ಗುರುತಿಸಲು ಸಾಧ್ಯವಾಗುವ ಉತ್ಪನ್ನದ ಹೆಸರನ್ನು ನಮೂದಿಸಿ.",
   imageInvalid:"ದಯವಿಟ್ಟು JPEG, PNG ಅಥವಾ WebP ಚಿತ್ರವನ್ನು ಆಯ್ಕೆಮಾಡಿ.", imageTooLarge:"ಚಿತ್ರವು 8 MB ಗಿಂತ ಚಿಕ್ಕದಾಗಿರಬೇಕು.",
-  nameRequired:"ಉತ್ಪನ್ನದ ಹೆಸರನ್ನು ನಮೂದಿಸಿ.", priceRequired:"ಮಾನ್ಯ ಬೆಲೆಯನ್ನು ನಮೂದಿಸಿ.", stockRequired:"ಮಾನ್ಯ ದಾಸ್ತಾನು ಪ್ರಮಾಣವನ್ನು ನಮೂದಿಸಿ.",
+  imageStorageLimit:"ಸಂಕುಚಿಸಿದ ಚಿತ್ರವು ಸಂಗ್ರಹಣಾ ಮಿತಿಗಿಂತ ದೊಡ್ಡದಾಗಿದೆ.", imageCompression:"ಚಿತ್ರವನ್ನು ಸಂಕುಚಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ಬೇರೆ ಚಿತ್ರವನ್ನು ಪ್ರಯತ್ನಿಸಿ.",
+  nameRequired:"ಉತ್ಪನ್ನದ ಹೆಸರನ್ನು ನಮೂದಿಸಿ.", priceRequired:"ಮಾನ್ಯ ಬೆಲೆಯನ್ನು ನಮೂದಿಸಿ.", stockRequired:"ಪ್ರಮಾಣವು ಶೂನ್ಯಕ್ಕಿಂತ ಹೆಚ್ಚಿರಬೇಕು.",
   productIntro:"ಮಾರುಕಟ್ಟೆಗೆ ಉತ್ಪನ್ನವನ್ನು ಸೇರಿಸಿ.", productAdded:"ಉತ್ಪನ್ನವನ್ನು ಯಶಸ್ವಿಯಾಗಿ ಸೇರಿಸಲಾಗಿದೆ",
   saving:"ಉಳಿಸಲಾಗುತ್ತಿದೆ...", aboutTitle:"FarmBridge AI ಬಗ್ಗೆ", aboutCopy:"FarmBridge AI ರೈತರನ್ನು ಗ್ರಾಹಕರೊಂದಿಗೆ ನೇರವಾಗಿ ಸಂಪರ್ಕಿಸಿ ಸ್ಥಳೀಯ ಉತ್ಪನ್ನಗಳ ಖರೀದಿ ಮತ್ತು ಮಾರಾಟವನ್ನು ಸರಳಗೊಳಿಸುತ್ತದೆ.",
   featuresTitle:"FarmBridge AI ವೈಶಿಷ್ಟ್ಯಗಳು", howTitle:"ಇದು ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ", contactTitle:"ಸಹಾಯ ಮತ್ತು ಸಂಪರ್ಕ",
@@ -193,11 +211,12 @@ Object.assign(T.kn, {
   contactCopy:"ಲಾಗಿನ್ ಆದ ನಂತರ ನಿಮ್ಮ ಪ್ರೊಫೈಲ್, ಆರ್ಡರ್‌ಗಳು ಅಥವಾ ಅಧಿಸೂಚನೆಗಳ ಮೂಲಕ FarmBridge ಚಟುವಟಿಕೆಗಳನ್ನು ನಿರ್ವಹಿಸಿ."
 });
 Object.assign(T.en, {
-  productName:"Product name", description:"Description", price:"Price", stock:"Stock", unit:"Unit",
+  productName:"Product name", description:"Description", price:"Price", stock:"Quantity", unit:"Unit",
   imageUpload:"Product image (optional)", imageHint:"JPEG, PNG, or WebP; up to 8 MB. The image is compressed automatically.",
-  removeImage:"Remove image", categoryCorrection:"Choose a category", categoryCorrectionHint:"Please choose the correct category so this product is not misclassified.",
+  removeImage:"Remove image", categoryCorrectionHint:"Enter a recognized product name so its category can be inferred.",
   imageInvalid:"Choose a JPEG, PNG, or WebP image.", imageTooLarge:"The image must be smaller than 8 MB.",
-  nameRequired:"Enter a product name.", priceRequired:"Enter a valid price.", stockRequired:"Enter a valid stock quantity.",
+  imageStorageLimit:"The compressed image exceeds the storage limit.", imageCompression:"The image could not be compressed. Try a different image.",
+  nameRequired:"Enter a product name.", priceRequired:"Enter a valid price.", stockRequired:"Enter a quantity greater than zero.",
   productIntro:"Add a product to the consumer marketplace.", productAdded:"Product added successfully",
   saving:"Saving...", aboutTitle:"About FarmBridge AI", aboutCopy:"FarmBridge AI connects farmers directly with consumers, making it easier to list, discover, and buy local produce.",
   featuresTitle:"FarmBridge AI Features", howTitle:"How It Works", contactTitle:"Help and Contact",
@@ -233,9 +252,9 @@ const labelKey = { vegetables:"vegetables", fruits:"fruits", grains:"grains", sp
 
 function Lang({lang,setLang}) { return <button className="lang" onClick={()=>setLang(lang === "kn" ? "en" : "kn")}><Globe2 size={17}/>{lang === "kn" ? "ಕನ್ನಡ" : "English"}<ChevronDown size={15}/></button> }
 function Logo({dark=false}) { return <div className={`logo ${dark?"dark":""}`}><Leaf size={34}/><div><b>FarmBridge <span>AI</span></b><small>Bringing Farms Closer to You</small></div></div> }
-function Top({lang,setLang,back,go}) { const t=T[lang]; const links=[["landing",t.home],["about",t.about],["features",t.features],["how",t.how],["contact",t.contact]]; return <header className="top">{back && <button className="back" onClick={back}><ArrowLeft size={18}/>{t.back}</button>}<Logo/><nav>{links.map(([page,label],index)=><a href="#" key={`${page}-${index}`} onClick={event=>{event.preventDefault();go?.(page)}}>{label}</a>)}</nav><Lang lang={lang} setLang={setLang}/></header> }
+function Top({lang,setLang,back,go,showPartner=false}) { const t=T[lang]; const links=[["landing",t.home],["about",t.about],["features",t.features],["how",t.how],["contact",t.contact]]; return <header className={`top ${showPartner?"top-home":""}`}>{back && <button className="back" onClick={back}><ArrowLeft size={18}/>{t.back}</button>}<Logo/><nav>{links.map(([page,label],index)=><a href="#" key={`${page}-${index}`} onClick={event=>{event.preventDefault();go?.(page)}}>{label}</a>)}{showPartner&&<button className="partner-entry" onClick={()=>go("deliveryPartner")}>{lang==="kn"?"ವಿತರಣಾ ಪಾಲುದಾರ ಲಾಗಿನ್":"Delivery Partner Login"}</button>}</nav><Lang lang={lang} setLang={setLang}/></header> }
 
-function Landing({lang,setLang,go}) { const t=T[lang]; return <div className="landing" style={{backgroundImage:`url(${landingFarm})`}}><Top lang={lang} setLang={setLang} go={go}/><div className="landing-main"><div className="landing-copy"><div className="eyebrow"><Leaf size={17}/>{t.fresh}</div><h1>{t.bringing}<br/><span>{t.closer}</span></h1><p>{t.choose}</p></div><div className="roles"><Role farmer={false} t={t} go={()=>go("consumer")}/><Role farmer t={t} go={()=>go("farmerLogin")}/></div></div><div className="features"><Feature i={<Leaf/>} a={t.freshHealthy} b={t.natural}/><Feature i={<UserRound/>} a={t.supportLocal} b={t.empower}/><Feature i={<ShieldCheck/>} a={t.safe} b={t.quality}/><Feature i={<Sparkles/>} a={t.aiPowered} b={t.smart}/></div><footer>© 2026 FarmBridge AI. All rights reserved.</footer></div> }
+function Landing({lang,setLang,go}) { const t=T[lang]; return <div className="landing" style={{backgroundImage:`url(${landingFarm})`}}><Top lang={lang} setLang={setLang} go={go} showPartner/><div className="landing-main"><div className="landing-copy"><div className="eyebrow"><Leaf size={17}/>{t.fresh}</div><h1>{t.bringing}<br/><span>{t.closer}</span></h1><p>{t.choose}</p></div><div className="roles"><Role farmer={false} t={t} go={()=>go("consumer")}/><Role farmer t={t} go={()=>go("farmerLogin")}/></div></div><div className="features"><Feature i={<Leaf/>} a={t.freshHealthy} b={t.natural}/><Feature i={<UserRound/>} a={t.supportLocal} b={t.empower}/><Feature i={<ShieldCheck/>} a={t.safe} b={t.quality}/><Feature i={<Sparkles/>} a={t.aiPowered} b={t.smart}/></div><footer>© 2026 FarmBridge AI. All rights reserved.</footer></div> }
 function PublicPage({page,lang,setLang,go}) {
   const t=T[lang];
   const isAbout=page==="about";
@@ -421,7 +440,7 @@ function Consumer({lang,setLang,go}) {
         <section className="box product-section"><div className="title"><h2>{category?`${t[category]} • ${t.recommended}`:t.recommended}</h2><a onClick={()=>setCategory(category||"vegetables")}>{t.viewAll}</a></div><div className="product-grid">{visible.slice(0,10).map(p=><Product key={p.id} p={p} t={t} onCart={()=>addToCart(p)} onBuy={()=>buyNow(p)} liked={isWishlisted(p)} onWishlist={()=>toggleWishlist(p)} onOpen={()=>openProduct(p)}/>)}</div>{!visible.length&&<div className="empty">No products found. Try another search.</div>}</section>
         <div className="promos"><Promo t={t.combo} s="Fresh Vegetables Combo"/><Promo t={t.free} s="On orders above ₹499"/><Promo t={t.best} s="Direct from Farmers"/></div>
       </main>
-      <aside className="right"><Orders t={t} onLogin={()=>loggedIn?setView("orders"):requireLogin()}/><Assistant t={t} loggedIn={loggedIn} onLogin={requireLogin}/></aside>
+      <aside className="right"><Orders t={t} onLogin={()=>loggedIn?setView("orders"):requireLogin()}/><Assistant t={t} lang={lang} loggedIn={loggedIn} onLogin={requireLogin}/></aside>
     </div>
     {cart.length>0&&<div className="toast">{cart.length} item(s) in cart <button onClick={()=>setView("cart")}>View Cart</button></div>}
   </div>;
@@ -430,7 +449,7 @@ function Product({p,t,onCart,onBuy,liked,onWishlist,onOpen}) {
   const name = p.name || "Product";
   const farmer = p.farmerName || p.farmer_name || "Farmer";
   const price = p.price ?? 0;
-  const stock = p.stock ?? 0;
+  const stock = p.quantity ?? p.stock ?? 0;
 
   return (
     <div className="product" onClick={onOpen}>
@@ -451,7 +470,7 @@ function Product({p,t,onCart,onBuy,liked,onWishlist,onOpen}) {
       <b>{name}</b>
       <small>By {farmer} ✓</small>
       <strong>₹{price}</strong>
-      <small>{stock} available</small>
+      <small>{stock} {p.unit || "kg"} available</small>
 
       <div className="product-actions">
         <button
@@ -507,12 +526,20 @@ function Orders({t,onLogin}) {
 }
 
 
-function Assistant({t,loggedIn,onLogin}) {
+function Assistant({t,lang,loggedIn,onLogin}) {
   const [question,setQuestion] = useState("");
   const [messages,setMessages] = useState([]);
   const [conversationId,setConversationId] = useState(null);
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState("");
+  const messagesRef = useRef(null);
+  const followLatestRef = useRef(true);
+
+  useEffect(() => {
+    if (followLatestRef.current && messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }
+  }, [messages, busy]);
 
   async function ask(value=question) {
     const message=value.trim();
@@ -524,7 +551,7 @@ function Assistant({t,loggedIn,onLogin}) {
     try{
       const result=await apiRequest("/ai/farming-assistant",{
         method:"POST",
-        body:JSON.stringify({message,...(conversationId?{conversationId}:{})})
+        body:JSON.stringify({message,uiLanguage:lang,...(conversationId?{conversationId}:{})})
       });
       setConversationId(result.conversation.id);
       setMessages(current=>[...current,{role:"user",content:message},{role:"assistant",content:result.answer}]);
@@ -546,23 +573,23 @@ function Assistant({t,loggedIn,onLogin}) {
         </div>
       </div>
 
-      {[t.fertilizer,t.leafSpot,t.soil,t.maize].map(x => (
-        <button
-          key={x}
-          onClick={() => ask(x)}
-        >
-          {x}
-        </button>
-      ))}
-
-      {messages.map((message,index)=><div className="ai-answer" key={`${message.role}-${index}`}>
-        <b>{message.role==="assistant"?"FarmBridge AI":"You"}</b><br/>{message.content}
-      </div>)}
-      {error&&<div className="ai-answer" role="alert">{error}</div>}
+      <div className="consumer-ai-thread" ref={messagesRef} onScroll={event=>{
+        const node=event.currentTarget;
+        followLatestRef.current=node.scrollHeight-node.scrollTop-node.clientHeight<48;
+      }} aria-live="polite">
+        {!messages.length&&!busy&&<div className="consumer-ai-starters">{[t.fertilizer,t.leafSpot,t.soil,t.maize].map(x=><button key={x} onClick={()=>ask(x)}>{x}</button>)}</div>}
+        {messages.map((message,index)=><article className={`consumer-ai-message ${message.role}`} key={`${message.role}-${index}`}>
+          <b>{message.role==="assistant"?"FarmBridge AI":"You"}</b><p>{message.content}</p>
+        </article>)}
+        {busy&&<div className="consumer-ai-status" role="status">FarmBridge AI is preparing a reply…</div>}
+      </div>
+      {error&&<div className="consumer-ai-error" role="alert">{error}</div>}
 
       <form className="ask" onSubmit={event=>{event.preventDefault();ask()}}>
-        <input value={question} onChange={event=>setQuestion(event.target.value)} placeholder={t.question} aria-label={t.question}/>
-        <button type="submit" disabled={busy}>
+        <textarea value={question} onChange={event=>setQuestion(event.target.value)} onKeyDown={event=>{
+          if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();ask()}
+        }} placeholder={t.question} aria-label={t.question} rows={1}/>
+        <button type="submit" disabled={busy||!question.trim()} aria-label="Send message">
           {busy?"…":<ArrowRight size={15}/>}
         </button>
       </form>
@@ -649,7 +676,8 @@ function ConsumerProfile({ go, onLogout }) {
 function ProductDetails({product,go,addToCart,buyNow,liked,onWishlist}) {
   const [qty,setQty]=useState(1);
   const name=product.name||"Product"; const price=Number(product.price||0);
-  return <div className="product-detail-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back</button><div className="detail-product-card"><div className="detail-product-image"><ProductImage product={product} alt={name}/></div><div className="detail-product-info"><div className="detail-breadcrumb">Home / {product.category || "Products"} / {name}</div><h1>{name}</h1><p className="detail-farmer">By {product.farmerName||product.farmer_name||"Farmer"} ✓</p><div className="detail-price">₹{price} <small>/ {product.unit||"kg"}</small></div><p>{product.description||"Fresh farm product supplied directly by a trusted farmer."}</p><div className="stock-badge">● {Number(product.stock||0)>0?"In Stock":"Out of Stock"}</div><div className="detail-qty"><b>Quantity</b><button onClick={()=>setQty(Math.max(1,qty-1))}>−</button><span>{qty}</span><button onClick={()=>setQty(qty+1)}>+</button></div><div className="detail-actions"><button onClick={()=>addToCart({...product},qty)}><ShoppingCart size={16}/> Add to Cart</button><button className="buy" onClick={()=>buyNow(product,qty)}>Buy Now</button><button className={`wishlist-detail ${liked?"liked":""}`} onClick={onWishlist}><Heart fill={liked?"currentColor":"none"}/></button></div><div className="detail-features"><span>✓ Direct from Farm</span><span>✓ Fresh & Natural</span><span>✓ Secure Delivery</span></div></div></div><div className="box detail-information"><h2>Product Information</h2><p>{product.description||"Farm fresh quality product. Carefully handled and supplied directly from the farmer."}</p></div></div>;
+  const inventory=Number(product.quantity??product.stock??0);
+  return <div className="product-detail-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back</button><div className="detail-product-card"><div className="detail-product-image"><ProductImage product={product} alt={name}/></div><div className="detail-product-info"><div className="detail-breadcrumb">Home / {product.category || "Products"} / {name}</div><h1>{name}</h1><p className="detail-farmer">By {product.farmerName||product.farmer_name||"Farmer"} ✓</p><div className="detail-price">₹{price} <small>/ {product.unit||"kg"}</small></div><p>{product.description||"Fresh farm product supplied directly by a trusted farmer."}</p><div className="stock-badge">● {inventory>0?"In Stock":"Out of Stock"} · {inventory} {product.unit||"kg"} available</div><div className="detail-qty"><b>Quantity</b><button onClick={()=>setQty(Math.max(1,qty-1))}>−</button><span>{qty}</span><button onClick={()=>setQty(qty+1)}>+</button></div><div className="detail-actions"><button onClick={()=>addToCart({...product},qty)}><ShoppingCart size={16}/> Add to Cart</button><button className="buy" onClick={()=>buyNow(product,qty)}>Buy Now</button><button className={`wishlist-detail ${liked?"liked":""}`} onClick={onWishlist}><Heart fill={liked?"currentColor":"none"}/></button></div><div className="detail-features"><span>✓ Direct from Farm</span><span>✓ Fresh & Natural</span><span>✓ Secure Delivery</span></div></div></div><div className="box detail-information"><h2>Product Information</h2><p>{product.description||"Farm fresh quality product. Carefully handled and supplied directly from the farmer."}</p></div></div>;
 }
 
 function CartView({cart,setCart,go,loadCart,onCheckout}) {
@@ -667,9 +695,11 @@ function WishlistView({wishlist,products,go,loadWishlist,addToCart,openProduct})
 
 function OrdersPage({go}) {
   const [orders,setOrders]=useState([]); const [loading,setLoading]=useState(true); const [track,setTrack]=useState(""); const [tracked,setTracked]=useState(null);
-  useEffect(()=>{(async()=>{try{const d=await apiRequest("/orders");setOrders(d.orders||[])}catch(e){alert(e.message)}finally{setLoading(false)}})()},[]);
+  const loadOrders=async(silent=false)=>{try{const d=await apiRequest("/orders");setOrders(d.orders||[]);setTracked(current=>current?d.orders.find(order=>order.id===current.id)||current:current)}catch(e){if(!silent)alert(e.message)}finally{setLoading(false)}};
+  useEffect(()=>{loadOrders();const timer=setInterval(()=>loadOrders(true),12000);return()=>clearInterval(timer)},[]);
   async function trackOrder(){if(!track.trim())return;try{const d=await apiRequest(`/orders/track/${track.trim()}`);setTracked(d.order)}catch(e){alert(e.message)}}
-  return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back</button><div className="cart-header"><h1>My Orders</h1><p>Order history and delivery tracking</p></div><div className="track-box"><input value={track} onChange={e=>setTrack(e.target.value)} placeholder="Enter Order ID e.g. ORD00001"/><button onClick={trackOrder}>Track</button></div>{tracked&&<OrderCard order={tracked}/>}<div className="order-history">{loading?<p>Loading orders...</p>:!orders.length?<div className="cart-empty"><Package size={50}/><h2>No orders yet</h2></div>:orders.map(o=><OrderCard key={o.id} order={o}/>)}</div></div>;
+  async function retry(order){try{const d=await apiRequest(`/orders/${order.id}/transport/retry`,{method:"POST"});setTracked(d.order);await loadOrders(true)}catch(e){alert(e.message)}}
+  return <div className="cart-page"><button className="back" onClick={go}><ArrowLeft size={18}/> Back</button><div className="cart-header"><h1>My Orders</h1><p>Order history and delivery tracking</p></div><div className="track-box"><input value={track} onChange={e=>setTrack(e.target.value)} placeholder="Enter Order ID e.g. ORD00001"/><button onClick={trackOrder}>Track</button></div>{tracked&&<OrderCard order={tracked} onRetry={retry}/>}<div className="order-history">{loading?<p>Loading orders...</p>:!orders.length?<div className="cart-empty"><Package size={50}/><h2>No orders yet</h2></div>:orders.map(o=><OrderCard key={o.id} order={o} onRetry={retry}/>)}</div></div>;
 }
 
 function orderPaymentLabel(method) {
@@ -682,13 +712,13 @@ function orderPaymentLabel(method) {
   })[method] || method || "Not recorded";
 }
 
-function OrderCard({ order }) {
+function OrderCard({ order, onRetry }) {
   const status = (order.status || "placed").toLowerCase();
 
   const steps = [
     { key: "placed", label: "Order Placed" },
     { key: "confirmed", label: "Order Confirmed" },
-    { key: "assigned", label: "Transport Assigned" },
+    { key: "transport_assigned", label: "Transport Assigned" },
     { key: "out_for_delivery", label: "Out for Delivery" },
     { key: "delivered", label: "Delivered" }
   ];
@@ -716,9 +746,11 @@ function OrderCard({ order }) {
 
       <small>
         <span>{order.deliveryAddress || "Delivery address not available"}</span>
+        <span>{order.transportPartner ? `Transport Assigned: ${order.transportPartner}${order.transportVehicleType ? ` · ${order.transportVehicleType}` : ""}${order.transportVehicleRegistration ? ` · ${order.transportVehicleRegistration}` : ""}` : `Transport: ${order.transportStatus || "Not requested"}`}</span>
         <span className="order-payment-detail">Payment: {orderPaymentLabel(order.paymentMethod)}</span>
         <span className="order-payment-detail">Payment status: {order.paymentStatus || "Not recorded"}{order.isDemoPayment ? " · DEMO ONLY" : ""}</span>
       </small>
+      {!order.transportPartner && onRetry && ["Searching for Transport", "No partner accepted"].includes(order.transportStatus) && <button type="button" className="submit" onClick={()=>onRetry(order)}>Retry transport matching</button>}
 
       <div className="tracking-details">
         <h3>Order Tracking</h3>
@@ -954,12 +986,7 @@ function Auth({role,mode,lang,setLang,go}) {
             {!loading && <ArrowRight size={17}/>}
           </button>
 
-          <button className="google-login" type="button" disabled title="Google OAuth is not configured">
-            G&nbsp; Continue with Google (not configured)
-          </button>
-          <small className="oauth-note">
-            Google sign-in is unavailable until a secure backend OAuth integration is configured.
-          </small>
+          <GoogleLogin role={farmer?"farmer":"consumer"} go={go}/>
 
           <small>
             {reg
@@ -989,6 +1016,8 @@ function Auth({role,mode,lang,setLang,go}) {
   );
 }
 
+function GoogleLogin({role,go}){const clientId=import.meta.env.VITE_GOOGLE_CLIENT_ID;const [error,setError]=useState("");useEffect(()=>{if(!clientId)return;let active=true;const init=()=>{if(!active||!window.google?.accounts?.id)return;window.google.accounts.id.initialize({client_id:clientId,callback:async response=>{try{const d=await apiRequest("/auth/google",{method:"POST",body:JSON.stringify({credential:response.credential,role})});localStorage.setItem("farmbridge_token",d.token);localStorage.setItem("farmbridge_user",JSON.stringify(d.user));go(role)}catch(e){setError(e.message)}}});const node=document.getElementById(`google-signin-${role}`);if(node)window.google.accounts.id.renderButton(node,{theme:"outline",size:"large",text:"continue_with",width:280})};if(window.google?.accounts?.id)init();else{let script=document.querySelector("script[data-google-identity]");if(!script){script=document.createElement("script");script.src="https://accounts.google.com/gsi/client";script.async=true;script.defer=true;script.dataset.googleIdentity="true";document.head.appendChild(script)}script.addEventListener("load",init)}return()=>{active=false}},[clientId,role,go]);return <div className="google-login-wrap">{clientId?<div id={`google-signin-${role}`}/>:<button className="google-login" type="button" disabled title="Set VITE_GOOGLE_CLIENT_ID and backend GOOGLE_CLIENT_ID">G&nbsp; Continue with Google (setup required)</button>}{error&&<small role="alert">{error}</small>}</div>}
+
 const farmerMenu = [
   ["dashboard",BarChart3],["products",Boxes],["addProduct",Plus],["myOrders",ClipboardList],["deliveries",Truck],["assistant",BrainCircuit],["previous",History],["transport",Truck],["matching",Sparkles],["earnings",CircleDollarSign],["profile",UserRound]
 ];
@@ -997,9 +1026,9 @@ function Farmer({lang,setLang,go}) {
   const t=T[lang]; const [view,setView]=useState("dashboard"); const [search,setSearch]=useState("");
   const [menuOpen,setMenuOpen]=useState(false);
   const [dashboard,setDashboard]=useState(null); const [products,setProducts]=useState([]); const [orders,setOrders]=useState([]); const [deliveries,setDeliveries]=useState([]); const [earnings,setEarnings]=useState(null); const [profile,setProfile]=useState(null); const [notifications,setNotifications]=useState([]);
-  const load=async()=>{
-    try{const [d,p,o,del,e,pr,n]=await Promise.all([apiRequest("/farmer/dashboard"),apiRequest("/farmer/products"),apiRequest("/orders"),apiRequest("/farmer/deliveries"),apiRequest("/farmer/earnings"),apiRequest("/profile"),apiRequest("/notifications")]);setDashboard(d);setProducts(p.products||[]);setOrders(o.orders||[]);setDeliveries(del.deliveries||[]);setEarnings(e);setProfile(pr.user);setNotifications(n.notifications||[])}catch(err){console.error(err);alert(err.message)}};
-  useEffect(()=>{load()},[]);
+  const load=async(silent=false)=>{
+    try{const [d,p,o,del,e,pr,n]=await Promise.all([apiRequest("/farmer/dashboard"),apiRequest("/farmer/products"),apiRequest("/orders"),apiRequest("/farmer/deliveries"),apiRequest("/farmer/earnings"),apiRequest("/profile"),apiRequest("/notifications")]);setDashboard(d);setProducts(p.products||[]);setOrders(o.orders||[]);setDeliveries(del.deliveries||[]);setEarnings(e);setProfile(pr.user);setNotifications(n.notifications||[])}catch(err){console.error(err);if(!silent)alert(err.message)}};
+  useEffect(()=>{load();const timer=setInterval(()=>load(true),12000);return()=>clearInterval(timer)},[]);
   const filtered=products.filter(p=>`${p.name||""} ${p.category||""} ${p.location||""}`.toLowerCase().includes(search.toLowerCase()));
   function logout(){localStorage.removeItem("farmbridge_token");localStorage.removeItem("farmbridge_user");go("landing")}
   return <div className="farmer-app">
@@ -1012,20 +1041,21 @@ function Farmer({lang,setLang,go}) {
     {menuOpen&&<button className="farmer-nav-backdrop" onClick={()=>setMenuOpen(false)} aria-label="Close navigation"/>}
     <main className="farmer-main">
       <header className="farmer-top"><button className="hamb" onClick={()=>setMenuOpen(open=>!open)} aria-label="Toggle navigation"><Menu/></button><div className="search"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder={t.search}/>{search&&<X size={15} onClick={()=>setSearch("")}/>}</div><div className="farmer-actions"><Lang lang={lang} setLang={setLang}/><button className="plain-icon" onClick={()=>setView("notifications")}><Bell/><i>{notifications.filter(n=>!n.isRead).length}</i></button><b>{profile?.name||"Farmer"}⌄</b></div></header>
-      <div className="farmer-content"><FarmerPanel view={view} t={t} dashboard={dashboard} products={filtered} allProducts={products} orders={orders} deliveries={deliveries} earnings={earnings} profile={profile} reload={load} setView={setView}/></div>
+      <div className={`farmer-content ${view === "assistant" ? "assistant-active" : ""}`}><FarmerPanel view={view} t={t} lang={lang} dashboard={dashboard} products={filtered} allProducts={products} orders={orders} deliveries={deliveries} earnings={earnings} profile={profile} reload={load} setView={setView}/></div>
       <button className="float-back" onClick={()=>go("landing")}><ArrowLeft size={15}/>{t.back}</button>
     </main>
+    {view!=="assistant"&&<button type="button" className="farmer-ai-launch" aria-label={t.assistant} title={t.assistant} onClick={()=>setView("assistant")}><BrainCircuit size={21}/></button>}
   </div>
 }
 
-function FarmerPanel({view,t,dashboard,products,allProducts,orders,deliveries,earnings,profile,reload,setView}){
+function FarmerPanel({view,t,lang,dashboard,products,allProducts,orders,deliveries,earnings,profile,reload,setView}){
   if(view==="dashboard") return <FarmerDashboardLive t={t} dashboard={dashboard} products={products} setView={setView}/>;
   if(view==="products") return <FarmerProductsLive t={t} products={products} reload={reload} setView={setView}/>;
   if(view==="addProduct") return <AddProductLive t={t} reload={reload} setView={setView}/>;
   if(view==="myOrders") return <FarmerOrdersLive t={t} orders={orders} reload={reload}/>;
   if(view==="deliveries") return <FarmerDeliveriesLive t={t} deliveries={deliveries}/>;
-  if(view==="assistant") return <FarmerAILive t={t}/>;
-  if(view==="previous") return <PreviousCropLive t={t}/>;
+  if(view==="assistant") return <FarmerAILive t={t} lang={lang}/>;
+  if(view==="previous") return <FarmerSalesLive t={t} lang={lang}/>;
   if(view==="transport") return <TransportLive t={t}/>;
   if(view==="matching") return <MatchingLive t={t} orders={orders}/>;
   if(view==="earnings") return <EarningsLive t={t} earnings={earnings}/>;
@@ -1041,11 +1071,11 @@ function FarmerDashboardLive({t,dashboard,products,setView}) {
       <div><h1><span>Fresh Produce</span><br/>Directly from Farmers<br/><span>to Your Home</span></h1><p>Good for you. Good for farmers.</p><button onClick={()=>setView("products")}>{t.products} <ArrowRight size={15}/></button></div>
     </section>
     <div className="farmer-stat-grid">{[["Products",stats.products??0,Boxes],["Orders",stats.orders??0,ClipboardList],["Pending Orders",stats.pendingOrders??0,History],["Delivered",stats.deliveries??0,PackageCheck],["Earnings",`₹${Number(stats.earnings||0).toFixed(2)}`,CircleDollarSign]].map(([a,b,I])=><div key={a}><I/><small>{a}</small><strong>{b}</strong></div>)}</div>
-    <section className="box"><div className="title"><h2>{t.available}</h2><a onClick={()=>setView("products")}>{t.viewAll}</a></div><div className="farmer-products">{products.slice(0,6).map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.location||"Farm"}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>setView("products")}>Manage</button></div>)}</div></section>
+    <section className="box"><div className="title"><h2>{t.available}</h2><a onClick={()=>setView("products")}>{t.viewAll}</a></div><div className="farmer-products">{products.slice(0,6).map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.location||"Farm"}</small><em>{p.quantity??p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>setView("products")}>Manage</button></div>)}</div></section>
   </>;
 }
 
-function FarmerProductsLive({t,products,reload,setView}){async function remove(id){if(!confirm("Remove this product?"))return;try{await apiRequest(`/products/${id}`,{method:"DELETE"});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><button onClick={()=>setView("dashboard")}><ArrowLeft size={16}/>{t.back}</button><div><span className="eyebrow"><Leaf size={15}/>FarmBridge AI</span><h1>{t.products}</h1><p>Manage your active products, stock and prices.</p></div></div><div className="farmer-products large">{products.map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.category} • {p.location||""}</small><em>{p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>remove(p.id)}>Remove</button></div>)}{!products.length&&<div className="empty">No products found.</div>}</div></section>}
+function FarmerProductsLive({t,products,reload,setView}){async function remove(id){if(!confirm("Remove this product?"))return;try{await apiRequest(`/products/${id}`,{method:"DELETE"});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><button onClick={()=>setView("dashboard")}><ArrowLeft size={16}/>{t.back}</button><div><span className="eyebrow"><Leaf size={15}/>FarmBridge AI</span><h1>{t.products}</h1><p>Manage your active products, stock and prices.</p></div></div><div className="farmer-products large">{products.map(p=><div key={p.id}><ProductImage product={p} alt={p.name}/><b>{p.name}</b><small>{p.category} • {p.location||""}</small><em>{p.quantity??p.stock} {p.unit||"kg"} available</em><strong>₹{p.price}</strong><button onClick={()=>remove(p.id)}>Remove</button></div>)}{!products.length&&<div className="empty">No products found.</div>}</div></section>}
 
 async function compressProductImage(file) {
   const source = await new Promise((resolve, reject) => {
@@ -1088,15 +1118,13 @@ async function compressProductImage(file) {
 }
 
 function AddProductLive({t,reload,setView}) {
-  const [form,setForm]=useState({name:"",description:"",price:"",unit:"kg",stock:"",location:""});
+  const [form,setForm]=useState({name:"",description:"",price:"",unit:"kg",quantity:"",location:""});
   const [image,setImage]=useState("");
   const [imageBusy,setImageBusy]=useState(false);
   const [busy,setBusy]=useState(false);
-  const [correctionCategory,setCorrectionCategory]=useState("");
   const [formError,setFormError]=useState("");
   const change=event=>{
     setForm(current=>({...current,[event.target.name]:event.target.value}));
-    if(event.target.name==="name")setCorrectionCategory("");
     setFormError("");
   };
   async function selectImage(event) {
@@ -1115,8 +1143,8 @@ function AddProductLive({t,reload,setView}) {
     setFormError("");
     try{
       setImage(await compressProductImage(file));
-    }catch(error){
-      setFormError(t.imageInvalid);
+    }catch{
+      setFormError(t.imageCompression);
     }finally{
       setImageBusy(false);
     }
@@ -1126,17 +1154,22 @@ function AddProductLive({t,reload,setView}) {
     setFormError("");
     if(!form.name.trim()){setFormError(t.nameRequired);return}
     if(form.price===""||!Number.isFinite(Number(form.price))||Number(form.price)<0){setFormError(t.priceRequired);return}
-    if(form.stock===""||!Number.isFinite(Number(form.stock))||Number(form.stock)<0){setFormError(t.stockRequired);return}
+    if(form.quantity===""||!Number.isFinite(Number(form.quantity))||Number(form.quantity)<=0){setFormError(t.stockRequired);return}
     try{
       setBusy(true);
+      const categoryData=await apiRequest(`/products/category?name=${encodeURIComponent(form.name.trim())}`);
+      if(!categoryData.category){setFormError(t.categoryCorrectionHint);return}
       await apiRequest("/products",{
         method:"POST",
         body:JSON.stringify({
-          ...form,
-          ...(correctionCategory?{category:correctionCategory}:{}),
+          name:form.name.trim(),
+          description:form.description,
+          location:form.location,
+          category:categoryData.category,
           ...(image?{image}:{}),
           price:Number(form.price),
-          stock:Number(form.stock)
+          quantity:Number(form.quantity),
+          unit:form.unit
         })
       });
       alert(t.productAdded);
@@ -1144,27 +1177,29 @@ function AddProductLive({t,reload,setView}) {
       setView("products");
     }catch(error){
       if(error.message.includes("Could not confidently categorize")){
-        setCorrectionCategory("");
         setFormError(t.categoryCorrectionHint);
       }else{
-        setFormError(error.message);
+        setFormError(error.message.includes("Product images must be no larger than")
+          ? t.imageStorageLimit
+          : error.message.includes("Upload a valid JPEG")
+            ? t.imageInvalid
+            : error.message.includes("Request is too large")
+              ? t.imageTooLarge
+              : error.message.includes("name and price are required")
+                ? t.nameRequired
+                : error.message);
       }
     }finally{
       setBusy(false);
     }
   }
-  const categories=[
-    ["vegetables",t.vegetables],["fruits",t.fruits],["grains",t.grains],
-    ["spices",t.spices],["dairy",t.dairy],["oils",t.oils],
-    ["organic",t.organic],["flowers",t.flowers],["herbal",t.herbal]
-  ];
   return <section className="detail-view">
     <div className="detail-head"><div><span className="eyebrow"><Plus size={15}/>FarmBridge AI</span><h1>{t.addProduct}</h1><p>{t.productIntro}</p></div></div>
     <form className="form-grid" onSubmit={submit} noValidate>
       <label>{t.productName}<input name="name" value={form.name} onChange={change} maxLength={160} placeholder="Tomato / ಟೊಮೇಟೊ"/></label>
       <label>{t.price}<input name="price" type="number" min="0" step="any" value={form.price} onChange={change}/></label>
-      <label>{t.stock}<input name="stock" type="number" min="0" step="any" value={form.stock} onChange={change}/></label>
-      <label>{t.unit}<input name="unit" value={form.unit} onChange={change}/></label>
+      <label>{t.stock}<input name="quantity" type="number" inputMode="decimal" min="0.000001" step="any" value={form.quantity} onChange={change} required/></label>
+      <label>{t.unit}<select name="unit" value={form.unit} onChange={change}><option value="kg">kg</option><option value="Units">Units</option></select></label>
       <label>{t.location}<input name="location" value={form.location} onChange={change}/></label>
       <label className="wide">{t.description}<textarea name="description" value={form.description} onChange={change}/></label>
       <label className="wide product-upload">{t.imageUpload}
@@ -1174,36 +1209,48 @@ function AddProductLive({t,reload,setView}) {
       {imageBusy&&<p className="wide" role="status">{t.saving}</p>}
       {image&&<div className="wide product-image-preview"><img src={image} alt={t.imageUpload}/><button type="button" onClick={()=>setImage("")}>{t.removeImage}</button></div>}
       {formError&&<div className="wide product-form-error" role="alert">{formError}</div>}
-      {formError===t.categoryCorrectionHint&&<fieldset className="wide category-correction">
-        <legend>{t.categoryCorrection}</legend><p>{t.categoryCorrectionHint}</p>
-        <div>{categories.map(([key,label])=><button type="button" className={correctionCategory===key?"selected":""} key={key} onClick={()=>setCorrectionCategory(key)}>{label}</button>)}</div>
-      </fieldset>}
       <button className="submit small-submit" disabled={busy||imageBusy}>{busy?t.saving:t.addProduct}<Plus size={16}/></button>
     </form>
   </section>;
 }
 
-function FarmerOrdersLive({t,orders,reload}){async function status(id,status){try{await apiRequest(`/orders/${id}/status`,{method:"PATCH",body:JSON.stringify({status})});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><ClipboardList size={15}/>FarmBridge AI</span><h1>{t.myOrders}</h1><p>Customer orders received for your products.</p></div></div><div className="simple-list">{orders.map(o=><div key={o.id}><PackageCheck/><div><b>ORD{String(o.id).padStart(5,"0")} • ₹{Number(o.totalAmount||0).toFixed(2)}</b><small>{o.deliveryAddress||"No address"}</small><small>Status: {o.status}</small><small className="farmer-payment-detail">Payment: {orderPaymentLabel(o.paymentMethod)} · {o.paymentStatus||"Not recorded"}{o.isDemoPayment?" · DEMO ONLY":""}</small></div><select value={o.status} onChange={e=>status(o.id,e.target.value)}><option value="placed">placed</option><option value="confirmed">confirmed</option><option value="transport_assigned">transport assigned</option><option value="out_for_delivery">out for delivery</option><option value="delivered">delivered</option><option value="cancelled">cancelled</option></select></div>)}{!orders.length&&<p>No orders yet.</p>}</div></section>}
+function FarmerOrdersLive({t,orders,reload}){async function status(id,value){try{const d=await apiRequest(`/orders/${id}/status`,{method:"PATCH",body:JSON.stringify({status:value})});if(value==="confirmed")alert(d.transportMessage);await reload()}catch(e){alert(e.message)}}async function retry(order){try{await apiRequest(`/orders/${order.id}/transport/retry`,{method:"POST"});await reload()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><ClipboardList size={15}/>FarmBridge AI</span><h1>{t.myOrders}</h1><p>Customer orders and automatic transport matching.</p></div></div><div className="simple-list">{orders.map(o=><div key={o.id}><PackageCheck/><div><b>ORD{String(o.id).padStart(5,"0")} • ₹{Number(o.totalAmount||0).toFixed(2)}</b><small>{o.deliveryAddress||"No address"}</small><small>Status: {o.status} · Transport: {o.transportStatus||"Searching for Transport"}</small>{o.transportPartner&&<small>Transport Assigned: {o.transportPartner}{o.transportVehicleType?` · ${o.transportVehicleType}`:""}{o.transportVehicleRegistration?` · ${o.transportVehicleRegistration}`:""}</small>}<small className="farmer-payment-detail">Payment: {orderPaymentLabel(o.paymentMethod)} · {o.paymentStatus||"Not recorded"}{o.isDemoPayment?" · DEMO ONLY":""}</small></div>{o.transportPartner?<span>{o.status.replaceAll("_"," ")}</span>:<select value={o.status} onChange={e=>status(o.id,e.target.value)}><option value="placed">placed</option><option value="confirmed">confirmed</option><option value="cancelled">cancelled</option></select>}{!o.transportPartner&&["Searching for Transport","No partner accepted"].includes(o.transportStatus)&&<button type="button" onClick={()=>retry(o)}>Retry matching</button>}</div>)}{!orders.length&&<p>No orders yet.</p>}</div></section>}
 
 function FarmerDeliveriesLive({t,deliveries}){return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Truck size={15}/>FarmBridge AI</span><h1>{t.deliveries}</h1><p>Assigned, out-for-delivery and completed deliveries.</p></div></div><div className="simple-list">{deliveries.map(o=><div key={o.id}><Truck/><div><b>ORD{String(o.id).padStart(5,"0")}</b><small>{o.fromLocation||"Farm"} → {o.toLocation||"Customer"}</small><small>{o.status}</small></div><span>₹{o.totalAmount}</span></div>)}</div></section>}
 
-function FarmerAILive({t}){return <FarmingAssistant t={t}/>}
+function FarmerAILive({t,lang}){return <FarmingAssistant t={t} lang={lang}/>}
 
-function PreviousCropLive({t}){const [records,setRecords]=useState([]);const [form,setForm]=useState({cropName:"Tomato",year:new Date().getFullYear()-1,category:"vegetables",season:"",areaAcres:"",yieldAmount:"",averagePrice:"",totalIncome:"",soilType:"Loamy",soilPh:"",notes:""});const [summary,setSummary]=useState(null);async function load(){try{const [r,s]=await Promise.all([apiRequest("/crops/previous-year"),apiRequest("/crops/summary")]);setRecords(r.records||[]);setSummary(s.summary)}catch(e){alert(e.message)}}useEffect(()=>{load()},[]);const ch=e=>setForm({...form,[e.target.name]:e.target.value});async function save(e){e.preventDefault();try{await apiRequest("/crops/previous-year",{method:"POST",body:JSON.stringify({...form,year:Number(form.year)})});alert("Crop record saved");await load()}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><History size={15}/>FarmBridge AI</span><h1>{t.previous}</h1><p>Save and review previous-year crop performance.</p></div></div>{summary&&<div className="stats">{[[t.avgYield,summary.averageYield],[t.avgPrice,summary.averagePrice],[t.production,summary.totalProduction],[t.income,summary.totalIncome]].map(x=><div key={x[0]}><small>{x[0]}</small><b>{x[1]}</b><span>From saved records</span></div>)}</div>}<form className="form-grid crop-form" onSubmit={save}><label>Crop<input name="cropName" value={form.cropName} onChange={ch}/></label><label>Year<input name="year" type="number" value={form.year} onChange={ch}/></label><label>Area (acres)<input name="areaAcres" value={form.areaAcres} onChange={ch}/></label><label>Yield<input name="yieldAmount" value={form.yieldAmount} onChange={ch}/></label><label>Average Price<input name="averagePrice" value={form.averagePrice} onChange={ch}/></label><label>Total Income<input name="totalIncome" value={form.totalIncome} onChange={ch}/></label><label>Soil Type<input name="soilType" value={form.soilType} onChange={ch}/></label><label>Soil pH<input name="soilPh" value={form.soilPh} onChange={ch}/></label><label className="wide">Notes<textarea name="notes" value={form.notes} onChange={ch}/></label><button className="submit small-submit">Save Crop Record</button></form><div className="simple-list crop-records">{records.map(r=><div key={r.id}><Leaf/><div><b>{r.cropName} • {r.year}</b><small>{r.areaAcres||0} acres • Yield {r.yieldAmount||0}</small><small>{r.soilType||"Soil not recorded"} • pH {r.soilPh||"-"}</small></div><span>₹{r.totalIncome||0}</span></div>)}</div></section>}
+function FarmerSalesLive({t,lang}) {
+ const formRef=useRef(null), now=new Date(), kn=lang==="kn";
+ const [month,setMonth]=useState(""),[year,setYear]=useState(String(now.getFullYear())),[search,setSearch]=useState(""),[records,setRecords]=useState([]),[summary,setSummary]=useState({}),[error,setError]=useState(""),[success,setSuccess]=useState(""),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false);
+ const copy=kn?{title:"ಹಿಂದಿನ ವರ್ಷದ ಬೆಳೆ ವಿವರಗಳು",sub:"ನಿಮ್ಮ ಹಿಂದಿನ ಉತ್ಪನ್ನ ಮಾರಾಟ ದಾಖಲೆಗಳನ್ನು ನಿರ್ವಹಿಸಿ.",sales:"ಒಟ್ಟು ಮಾರಾಟ",qty:"ಮಾರಾಟವಾದ ಪ್ರಮಾಣ",count:"ಒಟ್ಟು ದಾಖಲೆಗಳು",add:"ಮಾರಾಟ ದಾಖಲೆ ಸೇರಿಸಿ",history:"ಮಾರಾಟ ಇತಿಹಾಸ",product:"ಉತ್ಪನ್ನದ ಹೆಸರು",date:"ಮಾರಾಟದ ದಿನಾಂಕ",quantity:"ಪ್ರಮಾಣ",unit:"ಘಟಕ",price:"ಪ್ರತಿ ಘಟಕದ ಬೆಲೆ (₹)",save:"ದಾಖಲೆ ಉಳಿಸಿ",cancel:"ತೆರವುಗೊಳಿಸಿ",month:"ತಿಂಗಳು",year:"ವರ್ಷ",allMonths:"ಎಲ್ಲ ತಿಂಗಳುಗಳು",search:"ಉತ್ಪನ್ನ ಹುಡುಕಿ",reset:"ಫಿಲ್ಟರ್ ಮರುಹೊಂದಿಸಿ",download:"CSV ಡೌನ್‌ಲೋಡ್",actions:"ಕ್ರಿಯೆಗಳು",total:"ಒಟ್ಟು ಮೊತ್ತ",empty:"ಈ ಫಿಲ್ಟರ್‌ಗಳಿಗೆ ದಾಖಲೆಗಳಿಲ್ಲ.",loading:"ದಾಖಲೆಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ…",saved:"ಮಾರಾಟದ ದಾಖಲೆ ಉಳಿಸಲಾಗಿದೆ."}:{title:"Previous Year Crop Details",sub:"Manage your historical produce sales records.",sales:"Total Sales",qty:"Total Quantity Sold",count:"Total Records",add:"Add Sales Record",history:"Sales History",product:"Product Name",date:"Selling Date",quantity:"Quantity",unit:"Unit",price:"Selling Price per Unit (₹)",save:"Save Record",cancel:"Cancel / Clear",month:"Month",year:"Year",allMonths:"All months",search:"Search products",reset:"Reset filters",download:"Download CSV",actions:"Actions",total:"Total Amount",empty:"No records match these filters.",loading:"Loading records…",saved:"Sales record saved."};
+ async function load(){setLoading(true);setError("");try{const q=new URLSearchParams();if(month)q.set("month",month);if(year)q.set("year",year);const d=await apiRequest(`/farmer/sales?${q}`);setRecords(d.records||[]);setSummary(d)}catch(e){setError(e.message)}finally{setLoading(false)}}
+ useEffect(()=>{load()},[month,year]);
+ async function save(e){e.preventDefault();setError("");setSuccess("");setSaving(true);const f=new FormData(e.currentTarget);try{await apiRequest("/farmer/sales",{method:"POST",body:JSON.stringify({productName:f.get("productName"),sellingDate:f.get("sellingDate"),quantity:Number(f.get("quantity")),unit:f.get("unit"),sellingPrice:Number(f.get("sellingPrice"))})});formRef.current?.reset();setSuccess(copy.saved);await load()}catch(e){setError(e.message)}finally{setSaving(false)}}
+ function csv(){const data=[["Product","Selling Date","Month","Year","Quantity","Unit","Selling Price","Total"],...filtered.map(r=>[r.productName,r.sellingDate,r.month,r.year,r.quantity,r.unit,r.sellingPrice,r.total])];const text=data.map(r=>r.map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(",")).join("\r\n");const url=URL.createObjectURL(new Blob(["\ufeff",text],{type:"text/csv;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download="farmbridge-sales-records.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+ const filtered=records.filter(r=>String(r.productName||"").toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+ return <section className="sales-page"><div className="sales-heading"><div><span className="eyebrow"><History size={15}/>FarmBridge AI</span><h1>{copy.title}</h1><p>{copy.sub}</p></div></div>{error&&<p role="alert" className="sales-alert sales-error">{error}</p>}{success&&<p role="status" className="sales-alert sales-success">{success}</p>}<div className="sales-summary"><article><small>{copy.sales}</small><strong>₹{Number(summary.totalSales||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</strong></article><article><small>{copy.qty}</small><strong>{Number(summary.totalQuantity||0).toLocaleString()}</strong></article><article><small>{copy.count}</small><strong>{records.length}</strong></article></div><section className="sales-card"><div className="sales-section-heading"><div><h2>{copy.add}</h2><p>{kn?"ಮಾರಾಟದ ವಿವರಗಳನ್ನು ದಾಖಲಿಸಿ.":"Enter the details for this sale."}</p></div></div><form ref={formRef} className="sales-form" onSubmit={save}><label>{copy.product} *<input name="productName" required maxLength="160"/></label><label>{copy.date} *<input type="date" name="sellingDate" required max={now.toISOString().slice(0,10)}/></label><label>{copy.quantity} *<input type="number" name="quantity" min="0.001" step="any" required/></label><label>{copy.unit} *<select name="unit"><option value="kg">kg</option><option value="Units">Units</option></select></label><label>{copy.price} *<input type="number" name="sellingPrice" min="0" step="any" required/></label><div className="sales-form-actions"><button className="sales-primary" disabled={saving}>{saving?(kn?"ಉಳಿಸಲಾಗುತ್ತಿದೆ…":"Saving…"):copy.save}</button><button type="reset" className="sales-secondary" onClick={()=>{setError("");setSuccess("")}}>{copy.cancel}</button></div></form></section><section className="sales-card sales-history"><div className="sales-section-heading"><div><h2>{copy.history}</h2><p>{kn?"ದಿನಾಂಕದ ಪ್ರಕಾರ ದಾಖಲೆಗಳನ್ನು ವಿಂಗಡಿಸಿ ಹುಡುಕಿ.":"Filter, search and export your records."}</p></div><button className="sales-secondary" onClick={csv} disabled={!filtered.length}>{copy.download}</button></div><div className="sales-toolbar"><label>{copy.month}<select value={month} onChange={e=>setMonth(e.target.value)}><option value="">{copy.allMonths}</option>{Array.from({length:12},(_,i)=><option key={i+1} value={i+1}>{new Date(2000,i,1).toLocaleString(kn?"kn":"en",{month:"long"})}</option>)}</select></label><label>{copy.year}<input type="number" value={year} onChange={e=>setYear(e.target.value)} min="2000" max="2100"/></label><label className="sales-search">{copy.search}<input value={search} onChange={e=>setSearch(e.target.value)} placeholder={kn?"ಹೆಸರಿನಿಂದ ಹುಡುಕಿ":"Search by product name"}/></label><button className="sales-secondary" onClick={()=>{setMonth("");setYear(String(now.getFullYear()));setSearch("")}}>{copy.reset}</button></div><div className="sales-table-wrap">{loading?<p className="sales-state">{copy.loading}</p>:filtered.length?<table><thead><tr><th>{copy.product}</th><th>{copy.date}</th><th>{copy.quantity}</th><th>{copy.unit}</th><th>{copy.price}</th><th>{copy.total}</th><th>{copy.actions}</th></tr></thead><tbody>{filtered.map(r=><tr key={r.id}><td>{r.productName}</td><td>{r.sellingDate}</td><td>{Number(r.quantity).toLocaleString()}</td><td>{r.unit}</td><td>₹{Number(r.sellingPrice).toFixed(2)}</td><td>₹{Number(r.total).toFixed(2)}</td><td><button className="sales-row-action" onClick={()=>{const text=`${r.productName} · ${r.sellingDate} · ${r.quantity} ${r.unit} · ₹${Number(r.total).toFixed(2)}`;navigator.clipboard?.writeText(text).then(()=>setSuccess(kn?"ದಾಖಲೆ ನಕಲಿಸಲಾಗಿದೆ.":"Record summary copied."))}}>{kn?"ನಕಲಿಸಿ":"Copy"}</button></td></tr>)}</tbody></table>:<p className="sales-state">{copy.empty}</p>}</div></section></section>
+}
+function TransportLive({t}){const [partners,setPartners]=useState([]);useEffect(()=>{apiRequest("/transport/partners").then(d=>setPartners(d.partners||[])).catch(e=>alert(e.message))},[]);return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Truck size={15}/>FarmBridge AI</span><h1>{t.transport}</h1><p>Available transport partners and rates.</p></div></div><div className="simple-list">{partners.map(p=><div key={p.id}><Truck/><div><b>{p.name}</b><small>{p.vehicleType} • {p.capacityKg} kg • {p.location}</small><small>{p.phone||"Phone not listed"}</small></div><strong>{p.partnerType==="delivery_portal"?`₹${p.price??"Unavailable"} ${p.pricingMethod==="per_kg"?"per kg":"per km"}`:`₹${p.price}`}</strong></div>)}</div></section>}
 
-function TransportLive({t}){const [partners,setPartners]=useState([]);useEffect(()=>{apiRequest("/transport/partners").then(d=>setPartners(d.partners||[])).catch(e=>alert(e.message))},[]);return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Truck size={15}/>FarmBridge AI</span><h1>{t.transport}</h1><p>Available transport partners and rates.</p></div></div><div className="simple-list">{partners.map(p=><div key={p.id}><Truck/><div><b>{p.name}</b><small>{p.vehicleType} • {p.capacityKg} kg • {p.location}</small><small>{p.phone||"Phone not listed"}</small></div><strong>₹{p.price}</strong></div>)}</div></section>}
-
-function MatchingLive({t,orders}){const [weight,setWeight]=useState(50);const [from,setFrom]=useState("Mysore");const [matches,setMatches]=useState([]);async function match(){try{const d=await apiRequest("/transport/match",{method:"POST",body:JSON.stringify({from,totalWeight:Number(weight)})});setMatches(d.matches||[])}catch(e){alert(e.message)}}async function assign(orderId,partnerId){try{await apiRequest(`/orders/${orderId}/transport`,{method:"POST",body:JSON.stringify({transportPartnerId:partnerId})});alert("Transport assigned")}catch(e){alert(e.message)}}const order=orders.find(o=>!['delivered','cancelled'].includes(o.status));return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Sparkles size={15}/>FarmBridge AI</span><h1>{t.matching}</h1><p>AI-powered matching by location, capacity and price.</p></div></div><div className="match-form"><input value={from} onChange={e=>setFrom(e.target.value)} placeholder="From location"/><input type="number" value={weight} onChange={e=>setWeight(e.target.value)} placeholder="Weight kg"/><button onClick={match}>Find Best Match</button></div><div className="transport-match-grid">{matches.map((p,i)=><div className="transport-match-card" key={p.id}><small>{i===0?"BEST MATCH":"MATCH"}</small><h3>{p.name}</h3><p>{p.vehicleType} • {p.capacityKg} kg</p><strong>₹{p.price}</strong>{order&&<button onClick={()=>assign(order.id,p.id)}>{t.assign}</button>}</div>)}</div></section>}
+function MatchingLive({t}){const [weight,setWeight]=useState(50);const [from,setFrom]=useState("Mysore");const [matches,setMatches]=useState([]);async function match(){try{const d=await apiRequest("/transport/match",{method:"POST",body:JSON.stringify({from,totalWeight:Number(weight)})});setMatches(d.matches||[])}catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Sparkles size={15}/>FarmBridge AI</span><h1>{t.matching}</h1><p>Transport requests are created automatically when a consumer places an order. This view shows current matching information.</p></div></div><div className="match-form"><input value={from} onChange={e=>setFrom(e.target.value)} placeholder="From location"/><input type="number" value={weight} onChange={e=>setWeight(e.target.value)} placeholder="Weight kg"/><button onClick={match}>Find Best Match</button></div><div className="transport-match-grid">{matches.map((p,i)=><div className="transport-match-card" key={p.id}><small>{i===0?"BEST MATCH":"MATCH"}</small><h3>{p.name}</h3><p>{p.vehicleType} • {p.capacityKg} kg</p><strong>{p.price==null?"Estimate unavailable":`Estimated ₹${p.price}${p.pricingMethod?` (${p.pricingMethod})`:""}`}</strong>{p.distanceKm!=null&&<p>Distance: {p.distanceKm} km</p>}</div>)}</div></section>}
 
 function EarningsLive({t,earnings}){const s=earnings?.summary||{};return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><CircleDollarSign size={15}/>FarmBridge AI</span><h1>{t.earnings}</h1><p>Real earnings calculated from delivered orders.</p></div></div><div className="earn-grid">{[[t.income,`₹${Number(s.totalIncome||0).toFixed(2)}`],[t.orders,s.totalOrders||0],[t.deliveries,s.deliveredOrders||0],["Pending Orders",s.pendingOrders||0]].map(([a,b])=><div key={a}><CircleDollarSign/><small>{a}</small><strong>{b}</strong></div>)}</div></section>}
 
-function ProfileLive({t,profile,reload}){const [form,setForm]=useState({name:profile?.name||"",phone:profile?.phone||"",location:profile?.location||"",farmName:profile?.farmName||"",experienceYears:profile?.experienceYears||""});useEffect(()=>setForm({name:profile?.name||"",phone:profile?.phone||"",location:profile?.location||"",farmName:profile?.farmName||"",experienceYears:profile?.experienceYears||""}),[profile]);const ch=e=>setForm({...form,[e.target.name]:e.target.value});async function save(e){e.preventDefault();try{const d=await apiRequest("/profile",{method:"PUT",body:JSON.stringify({...form,experienceYears:form.experienceYears?Number(form.experienceYears):null})});localStorage.setItem("farmbridge_user",JSON.stringify(d.user));await reload();alert("Profile updated") }catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><UserRound size={15}/>FarmBridge AI</span><h1>{t.profile}</h1><p>Manage your farmer profile details.</p></div></div><form className="form-grid" onSubmit={save}><label>Name<input name="name" value={form.name} onChange={ch}/></label><label>Phone<input name="phone" value={form.phone} onChange={ch}/></label><label>Location<input name="location" value={form.location} onChange={ch}/></label><label>Farm Name<input name="farmName" value={form.farmName} onChange={ch}/></label><label>Experience (years)<input name="experienceYears" value={form.experienceYears} onChange={ch}/></label><button className="submit small-submit">Save Profile</button></form></section>}
+function ProfileLive({t,profile,reload}){const [form,setForm]=useState({name:profile?.name||"",phone:profile?.phone||"",location:profile?.location||"",latitude:profile?.latitude??"",longitude:profile?.longitude??"",farmName:profile?.farmName||"",experienceYears:profile?.experienceYears||""});useEffect(()=>setForm({name:profile?.name||"",phone:profile?.phone||"",location:profile?.location||"",latitude:profile?.latitude??"",longitude:profile?.longitude??"",farmName:profile?.farmName||"",experienceYears:profile?.experienceYears||""}),[profile]);const ch=e=>setForm({...form,[e.target.name]:e.target.value});async function save(e){e.preventDefault();try{const d=await apiRequest("/profile",{method:"PUT",body:JSON.stringify({...form,latitude:form.latitude===""?null:Number(form.latitude),longitude:form.longitude===""?null:Number(form.longitude),experienceYears:form.experienceYears?Number(form.experienceYears):null})});localStorage.setItem("farmbridge_user",JSON.stringify(d.user));await reload();alert("Profile updated") }catch(e){alert(e.message)}}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><UserRound size={15}/>FarmBridge AI</span><h1>{t.profile}</h1><p>Manage your farmer profile details. Pickup coordinates are used to enforce partner service radius and calculate distance.</p></div></div><form className="form-grid" onSubmit={save}><label>Name<input name="name" value={form.name} onChange={ch}/></label><label>Phone<input name="phone" value={form.phone} onChange={ch}/></label><label>Location<input name="location" value={form.location} onChange={ch}/></label><label>Pickup latitude<input type="number" min="-90" max="90" step="any" name="latitude" value={form.latitude} onChange={ch}/></label><label>Pickup longitude<input type="number" min="-180" max="180" step="any" name="longitude" value={form.longitude} onChange={ch}/></label><label>Farm Name<input name="farmName" value={form.farmName} onChange={ch}/></label><label>Experience (years)<input name="experienceYears" value={form.experienceYears} onChange={ch}/></label><button className="submit small-submit">Save Profile</button></form></section>}
 
 function FarmerNotifications({t}){const [items,setItems]=useState([]);useEffect(()=>{apiRequest("/notifications").then(d=>setItems(d.notifications||[])).catch(e=>alert(e.message))},[]);async function read(id){await apiRequest(`/notifications/${id}/read`,{method:"PATCH"});setItems(x=>x.map(n=>n.id===id?{...n,isRead:true}:n))}return <section className="detail-view"><div className="detail-head"><div><span className="eyebrow"><Bell size={15}/>FarmBridge AI</span><h1>Notifications</h1></div></div><div className="notification-list">{items.map(n=><div className={`notification-item ${n.isRead?"read":""}`} key={n.id}><Bell/><div><b>{n.title}</b><p>{n.message}</p></div>{!n.isRead&&<button onClick={()=>read(n.id)}>Mark read</button>}</div>)}</div></section>}
 
 
 function App(){
-  const [page,setPage]=useState("landing"),[lang,setLang]=useState("kn");
+  const [page,setPage]=useState("landing"),[lang,setLang]=useState(()=>{
+    try { return localStorage.getItem("farmbridge_lang")==="en" ? "en" : "kn"; }
+    catch { return "kn"; }
+  });
+  useEffect(()=>{
+    try { localStorage.setItem("farmbridge_lang",lang); }
+    catch { /* Keep the active in-memory language if storage is unavailable. */ }
+  },[lang]);
   const go=p=>setPage(p);
   useEffect(()=>{
     function returnToLogin(event){
@@ -1221,6 +1268,7 @@ function App(){
   if(page==="farmerLogin")return <Auth role="farmer" mode="login" {...p}/>;
   if(page==="farmerRegister")return <Auth role="farmer" mode="register" {...p}/>;
   if(page==="farmer")return <Farmer {...p}/>;
+  if(page==="deliveryPartner")return <TransportPartnerPortal {...p}/>;
   return <Landing {...p}/>;
 }
 createRoot(document.getElementById("root")).render(<App/>);

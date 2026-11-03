@@ -596,6 +596,64 @@
   text-align: center;
 }
 
+.farmer-ai-launch {
+  position: fixed;
+  z-index: 20;
+  right: 18px;
+  bottom: 76px;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #0e6030;
+  border-radius: 50%;
+  background: #116e37;
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(17, 74, 36, .25);
+  cursor: pointer;
+}
+
+.farmer-ai-launch:hover { background: #0e6030; }
+.farmer-ai-launch:focus-visible { outline: 3px solid #f0b429; outline-offset: 3px; }
+
+.market-price-placeholder {
+  display: flex;
+  max-width: 760px;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #dce8dc;
+  border-radius: 12px;
+  background: #f7faf5;
+  color: #33523a;
+}
+
+.market-price-placeholder > svg {
+  flex: 0 0 auto;
+}
+
+.market-price-placeholder b {
+  font-size: 14px;
+}
+
+.market-price-placeholder p {
+  margin: 6px 0 0;
+  color: #6d796f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .farmer-ai-launch {
+    right: 10px;
+    bottom: 72px;
+    width: 46px;
+    height: 46px;
+  }
+}
+
 @keyframes assistant-spin {
   to { transform: rotate(360deg); }
 }

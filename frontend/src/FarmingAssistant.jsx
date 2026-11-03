@@ -22,7 +22,7 @@ const speechLanguages = [
   ["kn-IN-mixed", "ಕನ್ನಡ + English"],
 ];
 
-export default function FarmingAssistant({ t }) {
+export default function FarmingAssistant({ t, lang = "en" }) {
   const [conversations, setConversations] = useState([]);
   const [conversationId, setConversationId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -31,7 +31,7 @@ export default function FarmingAssistant({ t }) {
   const [micStatus, setMicStatus] = useState("ready");
   const [micError, setMicError] = useState("");
   const [speechLanguage, setSpeechLanguage] = useState("kn-IN");
-  const [provider, setProvider] = useState("local");
+  const [provider, setProvider] = useState("groq");
   const [language, setLanguage] = useState("Auto-detected");
   const [error, setError] = useState("");
   const [failedMessage, setFailedMessage] = useState(null);
@@ -40,7 +40,8 @@ export default function FarmingAssistant({ t }) {
   const transcriptRef = useRef("");
   const stopRequestedRef = useRef(false);
   const recognitionErrorRef = useRef("");
-  const messagesEndRef = useRef(null);
+  const threadRef = useRef(null);
+  const followLatestRef = useRef(true);
 
   useEffect(() => {
     let mounted = true;
@@ -66,7 +67,8 @@ export default function FarmingAssistant({ t }) {
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const thread = threadRef.current;
+    if (followLatestRef.current && thread) thread.scrollTop = thread.scrollHeight;
   }, [messages, busy]);
 
   async function refreshConversations() {
@@ -86,6 +88,7 @@ export default function FarmingAssistant({ t }) {
       setError("");
       const data = await apiRequest(`/ai/conversations/${id}`);
       setConversationId(data.conversation.id);
+      followLatestRef.current = true;
       setMessages(data.conversation.messages || []);
       setLanguage(data.conversation.language || "Auto-detected");
     } catch (err) {
@@ -110,14 +113,15 @@ export default function FarmingAssistant({ t }) {
     setDraft("");
     setError("");
     setFailedMessage(null);
+    followLatestRef.current = true;
     setBusy(true);
     try {
       const result = await apiRequest("/ai/farming-assistant", {
         method: "POST",
-        body: JSON.stringify({ message, ...(conversationId ? { conversationId } : {}) }),
+        body: JSON.stringify({ message, uiLanguage: lang, ...(conversationId ? { conversationId } : {}) }),
       });
       setConversationId(result.conversation.id);
-      setProvider(result.provider || "local");
+      setProvider(result.provider || "groq");
       setLanguage(result.language || "Auto-detected");
       setMessages((current) => [
         ...current,
@@ -291,12 +295,15 @@ export default function FarmingAssistant({ t }) {
           <div className="assistant-chat-topline">
             <div className="assistant-online"><span /> Farm assistant</div>
             <div className="assistant-meta">
-              <span><AudioLines size={14} /> {provider === "groq" ? "Groq AI" : "FarmBridge guidance"}</span>
+              <span><AudioLines size={14} /> {provider === "groq" ? "Groq AI" : "AI unavailable"}</span>
               <span>{language}</span>
             </div>
           </div>
 
-          <div className={`assistant-thread ${messages.length ? "has-messages" : ""}`}>
+          <div ref={threadRef} onScroll={(event) => {
+            const node = event.currentTarget;
+            followLatestRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+          }} className={`assistant-thread ${messages.length ? "has-messages" : ""}`}>
             {!messages.length ? (
               <div className="assistant-welcome">
                 <div className="assistant-welcome-mark"><Sprout size={27} /></div>
@@ -332,7 +339,6 @@ export default function FarmingAssistant({ t }) {
                   </article>
                 ))}
                 {busy && <div className="assistant-thinking"><LoaderCircle size={17} /> Looking at your question…</div>}
-                <div ref={messagesEndRef} />
               </div>
             )}
           </div>

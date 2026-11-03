@@ -2,8 +2,15 @@ import os
 import json
 import uuid
 import base64
+import math
 import re
 import unicodedata
+import secrets
+import hashlib
+import smtplib
+from email.message import EmailMessage
+import jwt as pyjwt
+from jwt import PyJWKClient
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 from functools import wraps
@@ -15,12 +22,18 @@ from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
 from flask_sqlalchemy import SQLAlchemy
 from groq import Groq
 from sqlalchemy import inspect, or_, func
+from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+allowed_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CLIENT_URL", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
@@ -37,13 +50,15 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
     "pool_recycle": 280,
 }
-app.config["JWT_SECRET_KEY"] = os.getenv(
-    "JWT_SECRET_KEY", "CHANGE_THIS_SECRET_IN_ENV"
-)
+jwt_secret = os.getenv("JWT_SECRET_KEY", "").strip()
+if not jwt_secret or jwt_secret == "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET":
+    raise RuntimeError("JWT_SECRET_KEY is missing or still uses its example value. Configure a long random secret in backend/.env.")
+app.config["JWT_SECRET_KEY"] = jwt_secret
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)
 
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
+google_jwks = PyJWKClient("https://www.googleapis.com/oauth2/v3/certs", cache_keys=True)
 
 
 # ============================================================
@@ -60,6 +75,8 @@ class User(db.Model):
     phone = db.Column(db.String(30))
     role = db.Column(db.String(20), nullable=False, default="consumer")
     location = db.Column(db.String(255))
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
     farm_name = db.Column(db.String(160))
     experience_years = db.Column(db.Integer)
     verified = db.Column(db.Boolean, default=False)
@@ -167,10 +184,15 @@ class Order(db.Model):
     transport_partner_id = db.Column(
         db.Integer, db.ForeignKey("transport_partners.id"), nullable=True
     )
+    delivery_partner_id = db.Column(
+        db.Integer, db.ForeignKey("delivery_partners.id"), nullable=True, index=True
+    )
     transport_partner_name = db.Column(db.String(160))
     from_location = db.Column(db.String(255))
     to_location = db.Column(db.String(255))
     total_weight = db.Column(db.Float, default=0)
+    pickup_latitude = db.Column(db.Float)
+    pickup_longitude = db.Column(db.Float)
     delivery_date = db.Column(db.Date)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -236,6 +258,72 @@ class TransportPartner(db.Model):
     available = db.Column(db.Boolean, default=True)
 
 
+class DeliveryPartner(db.Model):
+    __tablename__ = "delivery_partners"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    mobile = db.Column(db.String(30), nullable=True, unique=True)
+    email = db.Column(db.String(180), nullable=True, unique=True, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    address = db.Column(db.Text, nullable=True)
+    city = db.Column(db.String(120), nullable=True)
+    pincode = db.Column(db.String(12), nullable=True)
+    vehicle_type = db.Column(db.String(80), nullable=True)
+    vehicle_registration = db.Column(db.String(40), nullable=True, unique=True)
+    capacity_kg = db.Column(db.Float, nullable=True)
+    vehicle_photo = db.Column(db.Text)
+    license_number = db.Column(db.String(80), nullable=True)
+    documents = db.Column(db.Text)
+    pricing_method = db.Column(db.String(12), nullable=True)
+    per_km_rate = db.Column(db.Float)
+    per_kg_rate = db.Column(db.Float)
+    service_radius_km = db.Column(db.Float, nullable=True)
+    service_location = db.Column(db.String(180), nullable=True)
+    service_latitude = db.Column(db.Float)
+    service_longitude = db.Column(db.Float)
+    availability = db.Column(db.String(12), nullable=False, default="available")
+    verification_status = db.Column(db.String(20), nullable=False, default="unverified")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PartnerTransportRequest(db.Model):
+    __tablename__ = "partner_transport_requests"
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey("orders.id"), nullable=False, index=True)
+    partner_id = db.Column(db.Integer, db.ForeignKey("delivery_partners.id"), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    distance_km = db.Column(db.Float)
+    estimated_charge = db.Column(db.Float)
+    pricing_method = db.Column(db.String(12))
+    order = db.relationship("Order")
+    partner = db.relationship("DeliveryPartner")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime)
+    __table_args__ = (db.UniqueConstraint("order_id", "partner_id", name="uq_partner_order"),)
+
+
+class FarmerSaleRecord(db.Model):
+    __tablename__ = "farmer_sale_records"
+    id = db.Column(db.Integer, primary_key=True)
+    farmer_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    product_name = db.Column(db.String(160), nullable=False)
+    selling_date = db.Column(db.Date, nullable=False, index=True)
+    quantity = db.Column(db.Float, nullable=False)
+    unit = db.Column(db.String(12), nullable=False)
+    selling_price = db.Column(db.Float, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PartnerPasswordReset(db.Model):
+    __tablename__ = "partner_password_resets"
+    id = db.Column(db.Integer, primary_key=True)
+    partner_id = db.Column(db.Integer, db.ForeignKey("delivery_partners.id"), nullable=False, index=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime)
+
+
 class SharedOrder(db.Model):
     __tablename__ = "shared_orders"
 
@@ -269,6 +357,8 @@ def user_dict(u):
         "phone": u.phone,
         "role": u.role,
         "location": u.location,
+        "latitude": u.latitude,
+        "longitude": u.longitude,
         "farmName": u.farm_name,
         "experienceYears": u.experience_years,
         "verified": bool(u.verified),
@@ -441,14 +531,21 @@ def validate_product_image(image):
 
 
 def product_dict(p):
+    unit = str(p.unit or "kg").strip()
+    if re.fullmatch(r"(?:\d+(?:\.\d+)?\s*)?kg(?:\s*\d+(?:\.\d+)?)?", unit, re.IGNORECASE):
+        unit = "kg"
+    elif re.fullmatch(r"(?:\d+(?:\.\d+)?\s*)?units?(?:\s*\d+(?:\.\d+)?)?", unit, re.IGNORECASE):
+        unit = "Units"
+    quantity = float(p.stock or 0)
     return {
         "id": p.id,
         "name": p.name,
         "category": p.category,
         "description": p.description,
         "price": p.price,
-        "unit": p.unit,
-        "stock": p.stock,
+        "unit": unit,
+        "quantity": quantity,
+        "stock": quantity,
         "image": p.image,
         "location": p.location,
         "farmerId": p.farmer_id,
@@ -460,6 +557,25 @@ def product_dict(p):
 
 
 def order_dict(o):
+    partner_requests = PartnerTransportRequest.query.filter_by(order_id=o.id).all()
+    assigned_request = next((x for x in partner_requests if x.status in ("accepted", "picked_up", "in_transit", "delivered")), None)
+    assigned_partner = db.session.get(DeliveryPartner, o.delivery_partner_id) if o.delivery_partner_id else None
+    if o.status == "cancelled":
+        transport_status = "Cancelled"
+    elif assigned_request:
+        transport_status = "Transport Assigned" if assigned_request.status == "accepted" else assigned_request.status.replace("_", " ").title()
+    elif any(x.status == "pending" for x in partner_requests):
+        transport_status = "Request sent"
+    elif partner_requests:
+        transport_status = "No partner accepted"
+    elif o.status not in ("cancelled", "delivered"):
+        transport_status = "Searching for Transport"
+    elif o.transport_partner_name:
+        transport_status = "Assigned"
+    elif o.status == "confirmed":
+        transport_status = "No eligible partner found"
+    else:
+        transport_status = "Not requested"
     return {
         "id": o.id,
         "orderId": f"ORD{o.id:05d}",
@@ -474,8 +590,11 @@ def order_dict(o):
         "paymentMethod": o.payment_method,
         "paymentStatus": o.payment_status,
         "isDemoPayment": bool(o.payment_method and o.payment_method.endswith("_DEMO")),
-        "transportPartnerId": o.transport_partner_id,
-        "transportPartner": o.transport_partner_name,
+        "transportPartnerId": o.delivery_partner_id or o.transport_partner_id,
+        "transportPartner": assigned_partner.name if assigned_partner else o.transport_partner_name,
+        "transportVehicleType": assigned_partner.vehicle_type if assigned_partner else None,
+        "transportVehicleRegistration": assigned_partner.vehicle_registration if assigned_partner else None,
+        "transportStatus": transport_status,
         "from": o.from_location,
         "to": o.to_location,
         "totalWeight": o.total_weight,
@@ -506,7 +625,28 @@ def order_dict(o):
 
 def current_user():
     identity = get_jwt_identity()
-    return db.session.get(User, int(identity))
+    try:
+        return db.session.get(User, int(identity))
+    except (TypeError, ValueError):
+        return None
+
+
+def partner_required(fn):
+    @wraps(fn)
+    @jwt_required()
+    def wrapper(*args, **kwargs):
+        identity = str(get_jwt_identity() or "")
+        if not identity.startswith("partner:"):
+            return jsonify({"error": "Delivery partner access required"}), 403
+        try:
+            partner = db.session.get(DeliveryPartner, int(identity.split(":", 1)[1]))
+        except (TypeError, ValueError):
+            partner = None
+        if not partner:
+            return jsonify({"error": "Delivery partner account not found"}), 403
+        request.delivery_partner = partner
+        return fn(*args, **kwargs)
+    return wrapper
 
 
 def ai_message_dict(message):
@@ -554,7 +694,7 @@ def detect_message_language(message):
 def groq_completion(messages):
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
-        return None
+        raise RuntimeError("AI assistant is not configured. Set GROQ_API_KEY in the backend environment and restart the server.")
 
     try:
         result = Groq(api_key=api_key, timeout=45.0, max_retries=1).chat.completions.create(
@@ -773,6 +913,22 @@ def update_profile():
                 "farmName": "farm_name"
             }.get(field, field), data[field])
 
+    for field, low, high in (("latitude", -90, 90), ("longitude", -180, 180)):
+        if field in data:
+            raw = data[field]
+            if raw in (None, ""):
+                setattr(u, field, None)
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return jsonify({"error": f"{field} must be a valid coordinate"}), 400
+            if not math.isfinite(value) or not low <= value <= high:
+                return jsonify({"error": f"{field} is outside the valid range"}), 400
+            setattr(u, field, value)
+    if (u.latitude is None) != (u.longitude is None):
+        return jsonify({"error": "Enter both latitude and longitude, or leave both empty"}), 400
+
     if "experienceYears" in data:
         u.experience_years = int(data["experienceYears"]) if data["experienceYears"] else None
 
@@ -896,25 +1052,48 @@ def farmer_products():
 
      return jsonify({"products": [product_dict(p) for p in rows]})
 
+@app.get("/api/products/category")
+@role_required("farmer")
+def product_category():
+    name = str(request.args.get("name") or "").strip()
+    return jsonify({"category": infer_product_category(name)})
+
+
 @app.post("/api/products")
 @role_required("farmer")
 def create_product():
     data = request.get_json(silent=True) or {}
     name = str(data.get("name") or "").strip()
     supplied_category = str(data.get("category") or "").strip().casefold()
-    category = (
-        supplied_category
-        if supplied_category in PRODUCT_CATEGORIES
-        else infer_product_category(name)
-    )
+    category = infer_product_category(name)
 
-    if not name or data.get("price") is None:
-        return jsonify({"error": "name and price are required"}), 400
+    try:
+        price = float(data.get("price"))
+    except (TypeError, ValueError):
+        price = math.nan
+    try:
+        stock = float(data.get("quantity", data.get("stock")))
+    except (TypeError, ValueError):
+        stock = math.nan
+    if not name:
+        return jsonify({"error": "Product name is required"}), 400
+    if len(name) > 160:
+        return jsonify({"error": "Product name must be 160 characters or fewer"}), 400
+    if not math.isfinite(price) or price < 0:
+        return jsonify({"error": "Price must be a valid non-negative number"}), 400
+    if not math.isfinite(stock) or stock <= 0:
+        return jsonify({"error": "Quantity must be a valid number greater than zero"}), 400
+    unit = str(data.get("unit") or "kg").strip()
+    if unit.casefold() not in {"kg", "unit", "units"}:
+        return jsonify({"error": "Unit must be kg or Units"}), 400
+    unit = "kg" if unit.casefold() == "kg" else "Units"
     if not category:
         return jsonify({
-            "error": "Could not confidently categorize this product. Please choose its consumer category.",
+            "error": "Could not confidently categorize this product. Enter a recognized Kannada or English product name.",
             "categoryRequired": True,
         }), 400
+    if supplied_category and supplied_category != category:
+        return jsonify({"error": "The supplied category does not match the inferred product category."}), 400
     image_error = validate_product_image(data.get("image"))
     if image_error:
         return jsonify({"error": image_error}), 400
@@ -923,9 +1102,9 @@ def create_product():
         name=name,
         category=category,
         description=data.get("description", ""),
-        price=float(data["price"]),
-        unit=data.get("unit", "kg"),
-        stock=float(data.get("stock", 0)),
+        price=price,
+        unit=unit,
+        stock=stock,
         image=data.get("image"),
         location=data.get("location") or current_user().location,
         farmer_id=current_user().id,
@@ -1193,12 +1372,15 @@ def create_order():
                 checkout_id=checkout_id,
                 from_location=farmer.location if farmer else None,
                 to_location=current_user().location,
+                pickup_latitude=farmer.latitude if farmer else None,
+                pickup_longitude=farmer.longitude if farmer else None,
             )
             db.session.add(order)
             db.session.flush()
 
             total = 0
             weight = 0
+            weight_known = True
 
             for ci in items:
                 if not ci.product or not ci.product.is_active:
@@ -1208,7 +1390,10 @@ def create_order():
 
                 line = ci.quantity * ci.product.price
                 total += line
-                weight += ci.quantity
+                if (ci.product.unit or "").strip().casefold() in ("kg", "kilogram", "kilograms"):
+                    weight += ci.quantity
+                else:
+                    weight_known = False
                 ci.product.stock -= ci.quantity
 
                 db.session.add(OrderItem(
@@ -1221,7 +1406,7 @@ def create_order():
                 db.session.delete(ci)
 
             order.total_amount = round(total, 2)
-            order.total_weight = weight
+            order.total_weight = weight if weight_known else 0
             add_tracking(order, "placed", "Order placed successfully.")
             add_notification(
                 farmer_id,
@@ -1229,6 +1414,9 @@ def create_order():
                 f"Order ORD{order.id:05d} has been placed."
             )
             created.append(order)
+
+        for order in created:
+            create_partner_requests(order)
 
         db.session.commit()
     except Exception as exc:
@@ -1242,7 +1430,7 @@ def create_order():
 
 
 @app.get("/api/orders")
-@jwt_required()
+@role_required("consumer", "farmer")
 def get_orders():
     u = current_user()
 
@@ -1272,7 +1460,27 @@ def get_order(order_id):
     return jsonify({"order": order_dict(o)})
 
 
+@app.post("/api/orders/<int:order_id>/transport/retry")
+@jwt_required()
+def retry_transport_matching(order_id):
+    order = Order.query.filter_by(id=order_id).with_for_update().first()
+    user = current_user()
+    if not order or not user or user.id not in (order.consumer_id, order.farmer_id):
+        return jsonify({"error": "Order not found"}), 404
+    if order.status in ("cancelled", "delivered") or order.delivery_partner_id or order.transport_partner_id:
+        return jsonify({"error": "Transport matching is no longer available for this order"}), 409
+    farmer = db.session.get(User, order.farmer_id)
+    if farmer:
+        if order.pickup_latitude is None: order.pickup_latitude = farmer.latitude
+        if order.pickup_longitude is None: order.pickup_longitude = farmer.longitude
+    created = create_partner_requests(order)
+    db.session.commit()
+    refreshed = order_dict(order)
+    return jsonify({"message": "Matching retried", "requestsCreated": created, "order": refreshed})
+
+
 @app.get("/api/orders/track/<string:order_code>")
+@jwt_required()
 def track_order(order_code):
     code = order_code.upper().replace("#", "").replace("ORD", "")
     if not code.isdigit():
@@ -1282,25 +1490,37 @@ def track_order(order_code):
     if not o:
         return jsonify({"error": "Order not found"}), 404
 
+    user = current_user()
+    if not user or user.id not in (o.consumer_id, o.farmer_id):
+        return jsonify({"error": "Order not found"}), 404
+
     return jsonify({"order": order_dict(o)})
 
 
 @app.patch("/api/orders/<int:order_id>/status")
 @role_required("farmer")
 def update_order_status(order_id):
-    o = db.session.get(Order, order_id)
+    o = Order.query.filter_by(id=order_id).with_for_update().first()
     if not o or o.farmer_id != current_user().id:
         return jsonify({"error": "Order not found"}), 404
 
     data = request.get_json(silent=True) or {}
     status = data.get("status")
 
-    allowed = {
-        "placed", "confirmed", "transport_assigned",
-        "out_for_delivery", "delivered", "cancelled"
-    }
+    allowed = {"placed", "confirmed", "cancelled"}
     if status not in allowed:
         return jsonify({"error": "Invalid order status"}), 400
+    if o.status not in ("placed", "confirmed") and status != "cancelled":
+        return jsonify({"error": "Transport status is managed by the assigned delivery partner"}), 409
+
+    request_count = 0
+    if status == "confirmed" and o.status != "confirmed":
+        request_count = create_partner_requests(o)
+    if status == "cancelled":
+        PartnerTransportRequest.query.filter_by(order_id=o.id, status="pending").update(
+            {"status": "cancelled", "updated_at": datetime.utcnow()},
+            synchronize_session=False,
+        )
 
     o.status = status
     add_tracking(o, status, data.get("note", ""))
@@ -1312,7 +1532,438 @@ def update_order_status(order_id):
     )
     db.session.commit()
 
-    return jsonify({"message": "Order status updated", "order": order_dict(o)})
+    has_pending_requests = PartnerTransportRequest.query.filter_by(order_id=o.id, status="pending").count() > 0
+    return jsonify({"message": "Order status updated", "partnerRequestsCreated": request_count,
+                    "transportMessage": "Eligible delivery partners were notified." if has_pending_requests else "No eligible delivery partners matched the available location and weight data.",
+                    "order": order_dict(o)})
+
+
+def create_partner_requests(order):
+    """Persist one broadcast request per eligible partner using real coordinates when radius applies."""
+    pickup = (order.from_location or "").casefold().strip()
+    if not pickup or not order.total_weight or order.total_weight <= 0:
+        return 0
+    count = 0
+    for partner in DeliveryPartner.query.filter_by(availability="available").all():
+        service = (partner.service_location or "").casefold().strip()
+        if not service or (service not in pickup and pickup not in service):
+            continue
+        if partner.capacity_kg is None or order.total_weight > partner.capacity_kg:
+            continue
+        distance = transport_distance_km(
+            order.pickup_latitude, order.pickup_longitude,
+            partner.service_latitude, partner.service_longitude,
+        )
+        if partner.service_radius_km is not None:
+            if distance is None or distance > partner.service_radius_km:
+                continue
+        existing = PartnerTransportRequest.query.filter_by(order_id=order.id, partner_id=partner.id).first()
+        if existing:
+            continue
+        estimate = transport_estimate(partner, order.total_weight, distance)
+        db.session.add(PartnerTransportRequest(order_id=order.id, partner_id=partner.id,
+            status="pending", distance_km=distance, estimated_charge=estimate, pricing_method=partner.pricing_method,
+            expires_at=datetime.utcnow() + timedelta(hours=24)))
+        count += 1
+    return count
+
+
+def transport_distance_km(lat1, lon1, lat2, lon2):
+    values = (lat1, lon1, lat2, lon2)
+    if any(value is None or not math.isfinite(value) for value in values):
+        return None
+    if not (-90 <= lat1 <= 90 and -90 <= lat2 <= 90 and -180 <= lon1 <= 180 and -180 <= lon2 <= 180):
+        return None
+    earth_radius_km = 6371.0088
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi, d_lambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    a = min(1.0, max(0.0, a))
+    return round(earth_radius_km * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)), 2)
+
+
+def transport_estimate(partner, weight, distance):
+    if not math.isfinite(weight) or weight <= 0:
+        return None
+    if partner.pricing_method == "per_kg" and partner.per_kg_rate is not None and math.isfinite(partner.per_kg_rate) and partner.per_kg_rate >= 0:
+        return round(partner.per_kg_rate * weight, 2)
+    if partner.pricing_method == "per_km" and partner.per_km_rate is not None and math.isfinite(partner.per_km_rate) and partner.per_km_rate >= 0 and distance is not None:
+        return round(partner.per_km_rate * distance, 2)
+    return None
+
+
+def sale_dict(row):
+    return {"id": row.id, "productName": row.product_name, "sellingDate": row.selling_date.isoformat(),
+            "month": row.selling_date.month, "year": row.selling_date.year, "quantity": row.quantity,
+            "unit": row.unit, "sellingPrice": row.selling_price,
+            "total": round(row.quantity * row.selling_price, 2)}
+
+
+@app.get("/api/farmer/sales")
+@role_required("farmer")
+def farmer_sales():
+    query = FarmerSaleRecord.query.filter_by(farmer_id=current_user().id)
+    try:
+        year = int(request.args["year"]) if request.args.get("year") else None
+        month = int(request.args["month"]) if request.args.get("month") else None
+    except ValueError:
+        return jsonify({"error": "Month and year must be numeric"}), 400
+    if year is not None and not 2000 <= year <= 2100:
+        return jsonify({"error": "Year must be between 2000 and 2100"}), 400
+    if month is not None and not 1 <= month <= 12:
+        return jsonify({"error": "Month must be between 1 and 12"}), 400
+    if year is not None: query = query.filter(db.extract("year", FarmerSaleRecord.selling_date) == year)
+    if month is not None: query = query.filter(db.extract("month", FarmerSaleRecord.selling_date) == month)
+    rows = query.order_by(FarmerSaleRecord.selling_date.desc(), FarmerSaleRecord.id.desc()).all()
+    return jsonify({"records": [sale_dict(x) for x in rows],
+        "totalQuantity": round(sum(x.quantity for x in rows), 3),
+        "totalSales": round(sum(x.quantity * x.selling_price for x in rows), 2)})
+
+
+@app.post("/api/farmer/sales")
+@role_required("farmer")
+def add_farmer_sale():
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("productName", "")).strip()
+    unit = data.get("unit")
+    try:
+        date = datetime.strptime(str(data.get("sellingDate", "")), "%Y-%m-%d").date()
+        quantity, price = float(data.get("quantity")), float(data.get("sellingPrice"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Enter a valid date, quantity and selling price"}), 400
+    if not name or len(name) > 160 or unit not in ("kg", "Units") or quantity <= 0 or price < 0 or date > datetime.utcnow().date() or not math.isfinite(quantity + price):
+        return jsonify({"error": "Product, positive quantity, kg/Units and non-negative price are required"}), 400
+    row = FarmerSaleRecord(farmer_id=current_user().id, product_name=name, selling_date=date, quantity=quantity, unit=unit, selling_price=price)
+    db.session.add(row); db.session.commit()
+    return jsonify({"record": sale_dict(row)}), 201
+
+
+@app.post("/api/auth/google")
+def google_login():
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    credential = (request.get_json(silent=True) or {}).get("credential", "")
+    role = (request.get_json(silent=True) or {}).get("role", "consumer")
+    if not client_id:
+        return jsonify({"error": "Google sign-in is not configured. Set GOOGLE_CLIENT_ID and VITE_GOOGLE_CLIENT_ID."}), 503
+    if role not in ("consumer", "farmer") or not credential:
+        return jsonify({"error": "A Google credential and valid account role are required"}), 400
+    if not isinstance(credential, str) or len(credential) > 10000:
+        return jsonify({"error": "Google credential is invalid"}), 401
+    try:
+        signing_key = google_jwks.get_signing_key_from_jwt(credential)
+        claims = pyjwt.decode(credential, signing_key.key, algorithms=["RS256"], audience=client_id,
+                              issuer=["https://accounts.google.com", "accounts.google.com"])
+    except Exception:
+        return jsonify({"error": "Google credential could not be verified"}), 401
+    if claims.get("email_verified") not in (True, "true"):
+        return jsonify({"error": "Google credential validation failed"}), 401
+    email = str(claims.get("email", "")).strip().lower()
+    name = str(claims.get("name", "")).strip()[:120]
+    if not email or not name: return jsonify({"error": "Google account is missing a verified email or name"}), 401
+    user = User.query.filter_by(email=email).first()
+    if user and user.role != role: return jsonify({"error": f"This account is registered as {user.role}"}), 403
+    if not user:
+        user = User(name=name, email=email, password_hash=generate_password_hash(secrets.token_urlsafe(32)), role=role, verified=True)
+        db.session.add(user); db.session.commit()
+    return jsonify({"token": create_access_token(identity=str(user.id)), "user": user_dict(user)})
+
+
+def partner_public(p):
+    return {"id": p.id, "name": p.name, "mobile": p.mobile, "email": p.email, "address": p.address,
+        "city": p.city, "pincode": p.pincode, "vehicleType": p.vehicle_type, "vehicleRegistration": p.vehicle_registration,
+        "capacityKg": p.capacity_kg, "vehiclePhoto": p.vehicle_photo, "licenseNumber": p.license_number,
+        "documents": p.documents, "pricingMethod": p.pricing_method, "perKmRate": p.per_km_rate,
+        "perKgRate": p.per_kg_rate, "serviceRadiusKm": p.service_radius_km, "serviceLocation": p.service_location,
+        "serviceLatitude": p.service_latitude, "serviceLongitude": p.service_longitude,
+        "availability": p.availability, "verificationStatus": p.verification_status}
+
+
+def partner_request_dict(row, include_private=False):
+    o = row.order
+    result = {"id": row.id, "orderId": f"ORD{o.id:05d}", "orderDbId": o.id, "status": row.status,
+        "product": ", ".join(f"{i.product_name} × {i.quantity:g}" for i in o.items), "quantity": o.total_weight,
+        "pickup": o.from_location or o.farmer_user.location or "Unavailable", "delivery": o.to_location or o.delivery_address,
+        "distanceKm": row.distance_km, "estimatedCharge": row.estimated_charge, "pricingMethod": row.pricing_method,
+        "createdAt": row.created_at.isoformat(), "consumerName": o.consumer.name if o.consumer else None,
+        "farmerName": o.farmer_user.name if o.farmer_user else None}
+    if include_private and row.status in ("accepted", "picked_up", "in_transit"):
+        result.update({"consumerPhone": o.consumer.phone if o.consumer else None, "farmerPhone": o.farmer_user.phone if o.farmer_user else None})
+    return result
+
+
+@app.post("/api/partner/register")
+def partner_register():
+    d = request.form if request.form else (request.get_json(silent=True) or {})
+    # Targeted diagnostics omit submitted values, credentials and file contents.
+    app.logger.info("Partner registration request: content_type=%s fields=%s files=%s",
+                    request.mimetype, sorted(d.keys()), sorted(request.files.keys()))
+    required = {"name": "Full name is required.", "password": "Password is required."}
+    errors = {key: message for key, message in required.items() if not str(d.get(key, "")).strip()}
+    email_value = str(d.get("email", "")).strip().lower()
+    mobile_value = str(d.get("mobile", "")).strip()
+    email = email_value or None
+    mobile = mobile_value or None
+    if not email and not mobile:
+        errors["email"] = "Enter an email address or mobile number."
+        errors["mobile"] = "Enter an email address or mobile number."
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email): errors["email"] = "Enter a valid email address."
+    if mobile and not re.fullmatch(r"\+?[0-9 ()-]{7,20}", mobile): errors["mobile"] = "Enter a valid mobile number."
+    if not isinstance(d.get("password"), str) or len(d["password"]) < 8: errors["password"] = "Use at least 8 characters."
+
+    def optional_number(field, label, positive=False):
+        raw = str(d.get(field, "")).strip()
+        if not raw: return None
+        try: value = float(raw)
+        except (TypeError, ValueError):
+            errors[field] = f"Enter a valid {label}."
+            return None
+        if not math.isfinite(value) or (positive and value <= 0) or (not positive and value < 0):
+            errors[field] = f"{label.capitalize()} must be {'greater than zero' if positive else 'zero or greater'}."
+            return None
+        return value
+
+    capacity = optional_number("capacityKg", "vehicle capacity", positive=True)
+    radius = optional_number("serviceRadiusKm", "service radius", positive=True)
+    perkg = optional_number("perKgRate", "rate per kg")
+    perkm = optional_number("perKmRate", "rate per km")
+    service_latitude = optional_number("serviceLatitude", "service latitude")
+    service_longitude = optional_number("serviceLongitude", "service longitude")
+    if service_latitude is not None and not -90 <= service_latitude <= 90:
+        errors["serviceLatitude"] = "Latitude must be between -90 and 90."
+    if service_longitude is not None and not -180 <= service_longitude <= 180:
+        errors["serviceLongitude"] = "Longitude must be between -180 and 180."
+    if (service_latitude is None) != (service_longitude is None):
+        errors["serviceLatitude"] = "Enter both service coordinates, or leave both empty."
+    if radius is not None and service_latitude is None:
+        errors["serviceLatitude"] = "Service latitude and longitude are required when a service radius is set."
+    pricing_method = str(d.get("pricingMethod", "")).strip() or None
+    if pricing_method and pricing_method not in ("per_kg", "per_km"):
+        errors["pricingMethod"] = "Choose per kilogram or per kilometre."
+    availability = str(d.get("availability", "available")).strip() or "available"
+    if availability not in ("available", "busy", "offline"):
+        errors["availability"] = "Choose a valid availability status."
+    reg_value = str(d.get("vehicleRegistration", "")).strip().upper()
+    reg = reg_value or None
+
+    def read_upload(field, allowed_types, label):
+        uploaded = request.files.get(field)
+        if not uploaded or not uploaded.filename:
+            return ""
+        if uploaded.mimetype not in allowed_types:
+            errors[field] = f"{label} must use an accepted file type."
+            return ""
+        content = uploaded.read(900001)
+        if len(content) > 900000:
+            errors[field] = f"{label} must be under 900 KB."
+            return ""
+        if not content:
+            errors[field] = f"{label} cannot be empty."
+            return ""
+        signatures = {
+            "image/jpeg": content.startswith(b"\xff\xd8\xff"),
+            "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+            "image/webp": content.startswith(b"RIFF") and content[8:12] == b"WEBP",
+            "application/pdf": content.startswith(b"%PDF-"),
+        }
+        if not signatures.get(uploaded.mimetype, False):
+            errors[field] = f"{label} contents do not match the selected file type."
+            return ""
+        import base64
+        return f"data:{uploaded.mimetype};base64," + base64.b64encode(content).decode("ascii")
+
+    vehicle_photo = read_upload("vehiclePhoto", {"image/jpeg", "image/png", "image/webp"}, "Vehicle photo")
+    documents = read_upload("documents", {"application/pdf", "image/jpeg", "image/png", "image/webp"}, "Supporting document")
+    if errors:
+        app.logger.warning("Partner registration validation rejected: fields=%s", sorted(errors.keys()))
+        return jsonify({"error": "Review the highlighted fields and try again.", "errors": errors}), 400
+    duplicate_filters = []
+    if email: duplicate_filters.append(DeliveryPartner.email == email)
+    if mobile: duplicate_filters.append(DeliveryPartner.mobile == mobile)
+    if reg: duplicate_filters.append(DeliveryPartner.vehicle_registration == reg)
+    if duplicate_filters and DeliveryPartner.query.filter(or_(*duplicate_filters)).first():
+        duplicates = {}
+        if email and DeliveryPartner.query.filter_by(email=email).first(): duplicates["email"] = "This email is already registered."
+        if mobile and DeliveryPartner.query.filter_by(mobile=mobile).first(): duplicates["mobile"] = "This mobile number is already registered."
+        if reg and DeliveryPartner.query.filter_by(vehicle_registration=reg).first(): duplicates["vehicleRegistration"] = "This vehicle registration is already registered."
+        app.logger.warning("Partner registration duplicate rejected: fields=%s", sorted(duplicates.keys()))
+        return jsonify({"error": "An account already uses one or more of these details.", "errors": duplicates}), 409
+
+    def optional_text(field):
+        return str(d.get(field, "")).strip() or None
+
+    p = DeliveryPartner(name=str(d["name"]).strip(), mobile=mobile, email=email,
+        password_hash=generate_password_hash(d["password"]), address=optional_text("address"),
+        city=optional_text("city"), pincode=optional_text("pincode"),
+        vehicle_type=optional_text("vehicleType"), vehicle_registration=reg, capacity_kg=capacity,
+        vehicle_photo=vehicle_photo or None, license_number=optional_text("licenseNumber"),
+        documents=documents or None, pricing_method=pricing_method, per_km_rate=perkm,
+        per_kg_rate=perkg, service_radius_km=radius,
+        service_location=optional_text("serviceLocation"),
+        service_latitude=service_latitude, service_longitude=service_longitude,
+        availability=availability, verification_status="unverified")
+    try:
+        db.session.add(p)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        app.logger.warning("Partner registration database uniqueness conflict")
+        return jsonify({"error": "Email, mobile or vehicle registration is already registered.", "errors": {
+            "email": "Check whether this email is already registered.",
+            "mobile": "Check whether this mobile number is already registered.",
+            "vehicleRegistration": "Check whether this vehicle registration is already registered.",
+        }}), 409
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Partner registration could not be saved")
+        return jsonify({"error": "Registration could not be saved. Check the entered details and try again."}), 500
+    app.logger.info("Partner registration saved: partner_id=%s", p.id)
+    return jsonify({"message": "Registration received; documents are unverified pending review", "token": create_access_token(identity=f"partner:{p.id}"), "partner": {k:v for k,v in partner_public(p).items() if k not in ("documents", "vehiclePhoto")}}), 201
+
+
+@app.post("/api/partner/login")
+def partner_login():
+    d = request.get_json(silent=True) or {}
+    identifier = str(d.get("identifier", d.get("email", ""))).strip()
+    p = DeliveryPartner.query.filter(or_(DeliveryPartner.email == identifier.lower(), DeliveryPartner.mobile == identifier)).first()
+    if not p or not check_password_hash(p.password_hash, d.get("password", "")): return jsonify({"error": "Invalid partner mobile/email or password"}), 401
+    return jsonify({"token": create_access_token(identity=f"partner:{p.id}"), "partner": partner_public(p)})
+
+
+@app.post("/api/partner/forgot-password")
+def partner_forgot_password():
+    host=os.getenv("SMTP_HOST","").strip(); user=os.getenv("SMTP_USER","").strip(); password=os.getenv("SMTP_PASSWORD",""); sender=os.getenv("SMTP_FROM",user).strip()
+    if not all((host,user,password,sender)):
+        return jsonify({"error": "Password reset is unavailable until SMTP_HOST, SMTP_USER, SMTP_PASSWORD and SMTP_FROM are configured."}), 503
+    email=str((request.get_json(silent=True) or {}).get("email","")).strip().lower()
+    partner=DeliveryPartner.query.filter_by(email=email).first()
+    if partner:
+        raw=secrets.token_urlsafe(32); reset=PartnerPasswordReset(partner_id=partner.id,token_hash=hashlib.sha256(raw.encode()).hexdigest(),expires_at=datetime.utcnow()+timedelta(minutes=30))
+        db.session.add(reset); db.session.commit()
+        message=EmailMessage(); message["Subject"]="FarmBridge delivery partner password reset"; message["From"]=sender; message["To"]=email
+        message.set_content(f"Use this one-time password reset token within 30 minutes:\n\n{raw}\n\nIf you did not request this, ignore this message.")
+        try:
+            port=int(os.getenv("SMTP_PORT","587")); client=smtplib.SMTP_SSL if port==465 else smtplib.SMTP
+            with client(host,port,timeout=10) as smtp:
+                if port!=465: smtp.starttls()
+                smtp.login(user,password); smtp.send_message(message)
+        except Exception:
+            db.session.delete(reset); db.session.commit()
+            return jsonify({"error": "Password reset email could not be sent. Check SMTP configuration."}), 503
+    return jsonify({"message": "If the partner account exists, a one-time reset token has been sent."})
+
+
+@app.post("/api/partner/reset-password")
+def partner_reset_password():
+    data=request.get_json(silent=True) or {}; raw=str(data.get("token", "")); password=data.get("password", "")
+    if not isinstance(password,str) or len(password)<8: return jsonify({"error": "New password must contain at least 8 characters"}),400
+    token_hash=hashlib.sha256(raw.encode()).hexdigest()
+    reset=PartnerPasswordReset.query.filter_by(token_hash=token_hash,used_at=None).first()
+    if not reset or reset.expires_at<datetime.utcnow(): return jsonify({"error": "Reset token is invalid or expired"}),400
+    partner=db.session.get(DeliveryPartner,reset.partner_id)
+    if not partner: return jsonify({"error": "Partner account not found"}),404
+    partner.password_hash=generate_password_hash(password); reset.used_at=datetime.utcnow(); db.session.commit()
+    return jsonify({"message": "Password reset successful. Sign in with the new password."})
+
+
+@app.get("/api/partner/me")
+@partner_required
+def partner_me(): return jsonify({"partner": partner_public(request.delivery_partner)})
+
+
+@app.get("/api/partner/requests")
+@partner_required
+def partner_requests():
+    p = request.delivery_partner
+    now = datetime.utcnow()
+    PartnerTransportRequest.query.filter_by(partner_id=p.id, status="pending").filter(
+        or_(PartnerTransportRequest.expires_at <= now,
+            PartnerTransportRequest.expires_at.is_(None) & (PartnerTransportRequest.created_at <= now - timedelta(hours=24)))
+    ).update({"status": "expired", "updated_at": now}, synchronize_session=False)
+    db.session.commit()
+    rows = PartnerTransportRequest.query.filter_by(partner_id=p.id).order_by(PartnerTransportRequest.created_at.desc()).all()
+    return jsonify({"requests": [partner_request_dict(x, True) for x in rows], "pendingCount": sum(x.status == "pending" for x in rows)})
+
+
+@app.post("/api/partner/requests/<int:request_id>/reject")
+@partner_required
+def partner_reject(request_id):
+    row = PartnerTransportRequest.query.filter_by(id=request_id, partner_id=request.delivery_partner.id, status="pending").with_for_update().first()
+    if not row: return jsonify({"error": "Request is no longer pending"}), 409
+    row.status="rejected"; row.updated_at=datetime.utcnow(); db.session.commit()
+    return jsonify({"message": "Request rejected"})
+
+
+@app.post("/api/partner/requests/<int:request_id>/accept")
+@partner_required
+def partner_accept(request_id):
+    try:
+        # The order row lock serializes competing partner acceptance transactions on PostgreSQL.
+        row = PartnerTransportRequest.query.filter_by(id=request_id, partner_id=request.delivery_partner.id).with_for_update().first()
+        if not row: return jsonify({"error": "Request is no longer pending"}), 409
+        if row.status != "pending":
+            assigned_order = db.session.get(Order, row.order_id)
+            if assigned_order and (assigned_order.delivery_partner_id or assigned_order.transport_partner_id):
+                return jsonify({"error": "Another partner has already accepted this order"}), 409
+            return jsonify({"error": "Request is no longer pending"}), 409
+        now = datetime.utcnow()
+        expires_at = row.expires_at or (row.created_at + timedelta(hours=24))
+        if expires_at <= now:
+            row.status="expired"; row.updated_at=now; db.session.commit()
+            return jsonify({"error": "This transport request has expired"}), 409
+        order = Order.query.filter_by(id=row.order_id).with_for_update().first()
+        if not order or order.status not in ("placed", "confirmed"):
+            row.status="cancelled"; row.updated_at=datetime.utcnow(); db.session.commit()
+            return jsonify({"error": "This order is no longer available for transport"}), 409
+        if request.delivery_partner.availability != "available":
+            return jsonify({"error": "Your partner account is not currently available for bookings"}), 409
+        if order.delivery_partner_id or order.transport_partner_id or PartnerTransportRequest.query.filter_by(order_id=row.order_id, status="accepted").first():
+            return jsonify({"error": "Another partner has already accepted this order"}), 409
+        row.status="accepted"; row.updated_at=datetime.utcnow(); order.status="transport_assigned"; order.delivery_partner_id=request.delivery_partner.id; order.transport_partner_name=request.delivery_partner.name; request.delivery_partner.availability="busy"
+        PartnerTransportRequest.query.filter(
+            PartnerTransportRequest.order_id == row.order_id,
+            PartnerTransportRequest.id != row.id,
+            PartnerTransportRequest.status == "pending",
+        ).update({"status": "cancelled", "updated_at": datetime.utcnow()}, synchronize_session=False)
+        add_tracking(order, "transport_assigned", f"Delivery partner {request.delivery_partner.name} accepted the booking")
+        for user_id in (order.consumer_id, order.farmer_id): add_notification(user_id, "Delivery partner assigned", f"{request.delivery_partner.name} accepted order ORD{order.id:05d}.")
+        db.session.commit(); return jsonify({"message": "Booking accepted", "booking": partner_request_dict(row, True)})
+    except Exception:
+        db.session.rollback(); raise
+
+
+@app.patch("/api/partner/availability")
+@partner_required
+def partner_availability():
+    value=(request.get_json(silent=True) or {}).get("availability")
+    if value not in ("available", "busy", "offline"): return jsonify({"error": "Availability must be available, busy or offline"}),400
+    if value == "available" and PartnerTransportRequest.query.filter_by(partner_id=request.delivery_partner.id).filter(
+        PartnerTransportRequest.status.in_(("accepted", "picked_up", "in_transit"))
+    ).count():
+        return jsonify({"error": "Complete active bookings before becoming available"}), 409
+    request.delivery_partner.availability=value; db.session.commit(); return jsonify({"partner": partner_public(request.delivery_partner)})
+
+
+@app.get("/api/partner/earnings")
+@partner_required
+def partner_earnings():
+    rows=PartnerTransportRequest.query.filter_by(partner_id=request.delivery_partner.id).filter(PartnerTransportRequest.status.in_(("delivered",))).all()
+    return jsonify({"completed":len(rows),"earnings":round(sum(x.estimated_charge or 0 for x in rows),2),"bookings":[partner_request_dict(x,True) for x in rows]})
+
+
+@app.patch("/api/partner/bookings/<int:request_id>/status")
+@partner_required
+def partner_booking_status(request_id):
+    row=PartnerTransportRequest.query.filter_by(id=request_id,partner_id=request.delivery_partner.id).first(); value=(request.get_json(silent=True) or {}).get("status")
+    mapping={"picked_up":"out_for_delivery","in_transit":"out_for_delivery","delivered":"delivered"}
+    allowed_next={"accepted":"picked_up","picked_up":"in_transit","in_transit":"delivered"}
+    if not row or row.order.status == "cancelled" or allowed_next.get(row.status) != value: return jsonify({"error":"Invalid booking status"}),400
+    row.status=value; row.updated_at=datetime.utcnow(); row.order.status=mapping[value]; add_tracking(row.order,mapping[value],f"Delivery partner updated booking to {value}")
+    if value == "delivered" and PartnerTransportRequest.query.filter_by(partner_id=row.partner_id).filter(
+        PartnerTransportRequest.status.in_(("accepted", "picked_up", "in_transit"))
+    ).count() == 0:
+        row.partner.availability = "available"
+    for user_id in (row.order.consumer_id,row.order.farmer_id): add_notification(user_id,"Delivery update",f"Order ORD{row.order_id:05d}: {value.replace('_',' ')}")
+    db.session.commit(); return jsonify({"booking":partner_request_dict(row,True)})
 
 
 # ============================================================
@@ -1544,6 +2195,11 @@ def farming_assistant():
             return jsonify({"error": "Conversation not found"}), 404
 
     language_hint = detect_message_language(message)
+    requested_language = data.get("uiLanguage")
+    if requested_language not in (None, "en", "kn"):
+        return jsonify({"error": "uiLanguage must be 'en' or 'kn'"}), 400
+    if requested_language in ("en", "kn") and language_hint != "Kannada-English":
+        language_hint = "Kannada" if requested_language == "kn" else "English"
     if language_hint == "Kannada-English":
         language_instruction = (
             "This message is mixed Kannada-English. Answer in a natural Kannada-English mix, using Kannada script "
@@ -1561,11 +2217,35 @@ def farming_assistant():
             "same language. If it is Kannada-English code-mixed, preserve that natural mix."
         )
 
+    if user.role == "consumer":
+        role_context = (
+            "The authenticated user is a CONSUMER. Use the actual Consumer dashboard labels: Home/category navigation and "
+            "the search field browse farmer listings; open a product for its details; use Add to Cart or Buy Now, then "
+            "Cart and Checkout; use Wishlist for saved products; use My Orders to review purchases and order tracking; "
+            "Profile and Notifications are also available. At checkout an order can "
+            "create a transport request; eligible available delivery partners receive it, and the first valid acceptance "
+            "assigns transport. Explain only these existing workflows."
+        )
+    elif user.role == "farmer":
+        role_context = (
+            "The authenticated user is a FARMER. Use the actual Farmer dashboard labels: Add Product and My Products manage "
+            "listings; Orders and Deliveries show order and delivery progress; Previous Year Crop Details and sales records "
+            "show farm history; Transport Matching shows matching information; Earnings and Profile are available. "
+            "Consumer checkout creates a transport request automatically; eligible delivery partners receive it and the "
+            "first valid acceptance assigns it. Farmers do not manually assign a partner. Explain only these workflows."
+        )
+    else:
+        return jsonify({"error": "This account cannot use the farming assistant"}), 403
+
     prompt = [
         {
             "role": "system",
             "content": (
-                "You are FarmBridge AI, a practical farming assistant. " + language_instruction + " "
+                "You are FarmBridge AI, a practical farming and FarmBridge website assistant. " + role_context + " "
+                "For website questions give concise numbered steps that match the authenticated user's role and the "
+                "features described here. Do not claim to see or change account, order, sales or product data; do not "
+                "claim to perform actions. Never reveal private data. If a feature is not described, say you cannot "
+                "confirm it instead of inventing a page, button or API. " + language_instruction + " "
                 "Use prior messages to understand follow-ups, but match the language of the latest question. "
                 "Return only a JSON object with string keys 'language' and 'answer'. "
                 "Give clear, cautious agricultural guidance; do not invent local conditions or prescribe chemical doses. "
@@ -1583,66 +2263,15 @@ def farming_assistant():
         )
     prompt.append({"role": "user", "content": message})
 
-    provider = "groq" if os.getenv("GROQ_API_KEY", "").strip() else "local"
-    if provider == "groq":
-        try:
-            answer, language = groq_completion(prompt)
-        except RuntimeError as exc:
-            return jsonify({"error": str(exc)}), 502
-        if language_hint != "Auto-detected":
-            language = language_hint
-        topic = "farming"
-    else:
-        q = message.lower()
-
-        if any(x in q for x in ["fertility", "soil", "fertilizer", "ಗೊಬ್ಬರ", "ಮಣ್ಣು"]):
-            answer = (
-                "For soil fertility, start with a soil test for pH and nutrients. "
-                "Add suitable organic matter and use fertilizer according to the crop "
-                "and soil-test recommendation instead of guessing a dose."
-            )
-            topic = "soil_fertility"
-        elif any(x in q for x in ["water", "irrigation", "ನೀರು"]):
-            answer = (
-                "Irrigation depends on crop, soil and weather. Check soil moisture, "
-                "avoid waterlogging and use efficient irrigation where practical."
-            )
-            topic = "irrigation"
-        elif any(x in q for x in ["pest", "insect", "disease", "ಕೀಟ", "ರೋಗ"]):
-            answer = (
-                "Identify the pest or disease first. Prefer integrated pest management "
-                "and use only approved crop-protection products at the recommended dose."
-            )
-            topic = "pest_disease"
-        elif any(x in q for x in ["tomato", "ಟೊಮ್ಯಾಟೊ"]):
-            answer = (
-                "For tomatoes, focus on balanced nutrition, good drainage, regular "
-                "monitoring for leaf diseases and timely irrigation. Fertilizer quantity "
-                "should be based on crop stage and soil-test results."
-            )
-            topic = "tomato"
-        elif any(x in q for x in ["chilli", "ಚಿಲ್ಲಿ", "ಮೆಣಸಿನ"]):
-            answer = (
-                "For chilli, monitor leaf spots, sucking pests and moisture stress. "
-                "Remove severely affected material and use locally approved management "
-                "recommendations when needed."
-            )
-            topic = "chilli"
-        elif any(x in q for x in ["maize", "ಮೆಕ್ಕೆಜೋಳ"]):
-            answer = (
-                "Maize sowing time depends on your local season and rainfall. Choose "
-                "a locally recommended variety and ensure adequate soil moisture at sowing."
-            )
-            topic = "maize"
-        else:
-            answer = (
-                "I can help with crops, soil fertility, irrigation, pests, diseases, "
-                "fertilizer basics and previous-year crop data. Tell me the crop and "
-                "the problem you are seeing."
-            )
-            topic = "general"
-        language = "English"
-
+    provider = "groq"
+    try:
+        answer, language = groq_completion(prompt)
+    except RuntimeError as exc:
+        message_text = str(exc)
+        return jsonify({"error": message_text}), (503 if "not configured" in message_text else 502)
+    if language_hint != "Auto-detected":
+        language = language_hint
+    topic = "farming_and_farmbridge"
     if not conversation:
         conversation = AIConversation(
             user_id=user.id,
@@ -1686,8 +2315,7 @@ def transport_partners():
         if local:
             rows = local
 
-    return jsonify({
-        "partners": [
+    result = [
             {
                 "id": p.id,
                 "name": p.name,
@@ -1700,7 +2328,14 @@ def transport_partners():
             }
             for p in rows
         ]
-    })
+    for partner in DeliveryPartner.query.filter_by(availability="available").all():
+        if location and location not in (partner.service_location or "").casefold():
+            continue
+        result.append({"id": f"dp:{partner.id}", "partnerType": "delivery_portal", "name": partner.name,
+            "phone": None, "vehicleType": partner.vehicle_type, "capacityKg": partner.capacity_kg,
+            "location": partner.service_location, "price": partner.per_kg_rate if partner.pricing_method == "per_kg" else None,
+            "pricingMethod": partner.pricing_method, "available": True})
+    return jsonify({"partners": result})
 
 
 @app.post("/api/transport/match")
@@ -1708,8 +2343,10 @@ def transport_partners():
 def transport_match():
     data = request.get_json(silent=True) or {}
 
-    from_location = (data.get("from") or data.get("location") or "").lower()
-    weight = float(data.get("totalWeight", 0) or 0)
+    from_location = (data.get("from") or data.get("location") or "").casefold().strip()
+    try: weight = float(data.get("totalWeight", 0) or 0)
+    except (TypeError, ValueError): return jsonify({"error": "Weight must be a valid number in kilograms"}), 400
+    if not math.isfinite(weight) or weight <= 0: return jsonify({"error": "Weight must be greater than zero kilograms"}), 400
 
     rows = TransportPartner.query.filter_by(available=True).all()
 
@@ -1717,19 +2354,35 @@ def transport_match():
     scored = []
     for p in rows:
         score = 0
-        if from_location and from_location in (p.location or "").lower():
-            score += 100
-        if p.capacity_kg >= weight:
-            score += 50
-        else:
-            score -= 50
-        score -= p.price / 10000
+        locality = (p.location or "").casefold().strip()
+        if not from_location or not locality or (from_location not in locality and locality not in from_location):
+            continue
+        if p.capacity_kg is None or p.capacity_kg < weight:
+            continue
+        score += 100
+        score += 50
+        score -= float(p.price or 0) / 10000
         scored.append((score, p))
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
+    portal_matches = []
+    farmer = current_user()
+    for partner in DeliveryPartner.query.filter_by(availability="available").all():
+        locality = (partner.service_location or "").casefold().strip()
+        if not from_location or not locality or partner.capacity_kg is None or (locality not in from_location and from_location not in locality) or weight <= 0 or weight > partner.capacity_kg:
+            continue
+        distance = transport_distance_km(farmer.latitude, farmer.longitude,
+                                         partner.service_latitude, partner.service_longitude)
+        if partner.service_radius_km is not None and (distance is None or distance > partner.service_radius_km):
+            continue
+        portal_matches.append({"id": f"dp:{partner.id}", "partnerType": "delivery_portal", "name": partner.name,
+            "vehicleType": partner.vehicle_type, "capacityKg": partner.capacity_kg, "location": partner.service_location,
+            "price": transport_estimate(partner, weight, distance),
+            "pricingMethod": partner.pricing_method, "distanceKm": distance, "available": True})
+
     return jsonify({
-        "matches": [
+        "matches": portal_matches + [
             {
                 "id": p.id,
                 "name": p.name,
@@ -1748,34 +2401,10 @@ def transport_match():
 @app.post("/api/orders/<int:order_id>/transport")
 @role_required("farmer")
 def assign_transport(order_id):
-    o = db.session.get(Order, order_id)
-    if not o or o.farmer_id != current_user().id:
+    order = db.session.get(Order, order_id)
+    if not order or order.farmer_id != current_user().id:
         return jsonify({"error": "Order not found"}), 404
-
-    data = request.get_json(silent=True) or {}
-    partner = db.session.get(TransportPartner, data.get("transportPartnerId"))
-
-    if not partner or not partner.available:
-        return jsonify({"error": "Transport partner not available"}), 400
-    if o.total_weight > partner.capacity_kg:
-        return jsonify({"error": "Transport capacity is too small"}), 400
-
-    o.transport_partner_id = partner.id
-    o.transport_partner_name = partner.name
-    o.status = "transport_assigned"
-
-    add_tracking(
-        o, "transport_assigned",
-        f"Transport assigned: {partner.name}"
-    )
-    add_notification(
-        o.consumer_id,
-        "Transport assigned",
-        f"{partner.name} has been assigned to order ORD{o.id:05d}."
-    )
-
-    db.session.commit()
-    return jsonify({"message": "Transport assigned", "order": order_dict(o)})
+    return jsonify({"error": "Transport matching and partner assignment are automatic. Eligible partners can accept from their dashboard."}), 409
 
 
 # ============================================================
@@ -1978,6 +2607,9 @@ def ensure_order_payment_columns():
         "payment_method": "VARCHAR(40)",
         "payment_status": "VARCHAR(30)",
         "checkout_id": "VARCHAR(80)",
+        "delivery_partner_id": "INTEGER REFERENCES delivery_partners(id)",
+        "pickup_latitude": "FLOAT",
+        "pickup_longitude": "FLOAT",
     }
     with db.engine.begin() as connection:
         for name, sql_type in additions.items():
@@ -1988,12 +2620,51 @@ def ensure_order_payment_columns():
         connection.execute(db.text(
             "CREATE INDEX IF NOT EXISTS ix_orders_checkout_id ON orders (checkout_id)"
         ))
+        connection.execute(db.text(
+            "CREATE INDEX IF NOT EXISTS ix_orders_delivery_partner_id ON orders (delivery_partner_id)"
+        ))
+
+
+def ensure_transport_coordinate_columns():
+    additions = {
+        "users": {"latitude": "FLOAT", "longitude": "FLOAT"},
+        "delivery_partners": {"service_latitude": "FLOAT", "service_longitude": "FLOAT"},
+    }
+    with db.engine.begin() as connection:
+        for table, table_additions in additions.items():
+            columns = {column["name"] for column in inspect(db.engine).get_columns(table)}
+            for name, sql_type in table_additions.items():
+                if name not in columns:
+                    connection.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+        request_columns = {column["name"] for column in inspect(db.engine).get_columns("partner_transport_requests")}
+        if "expires_at" not in request_columns:
+            connection.execute(db.text("ALTER TABLE partner_transport_requests ADD COLUMN expires_at TIMESTAMP"))
+
+
+def ensure_partner_optional_registration_columns():
+    if db.engine.dialect.name != "postgresql":
+        return
+    columns = {column["name"]: column["nullable"] for column in inspect(db.engine).get_columns("delivery_partners")}
+    optional_columns = (
+        "mobile", "email", "address", "city", "pincode", "vehicle_type",
+        "vehicle_registration", "capacity_kg", "license_number", "pricing_method",
+        "service_radius_km", "service_location",
+    )
+    with db.engine.begin() as connection:
+        for name in optional_columns:
+            if name in columns and not columns[name]:
+                connection.execute(db.text(
+                    f"ALTER TABLE delivery_partners ALTER COLUMN {name} DROP NOT NULL"
+                ))
 
 
 with app.app_context():
     db.create_all()
     ensure_order_payment_columns()
-    seed_demo()
+    ensure_partner_optional_registration_columns()
+    ensure_transport_coordinate_columns()
+    if os.getenv("SEED_DEMO_DATA", "").strip().lower() == "true":
+        seed_demo()
 
 
 if __name__ == "__main__":

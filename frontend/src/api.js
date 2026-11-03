@@ -1,18 +1,29 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/+$/, "");
 
 export async function apiRequest(endpoint, options = {}) {
   const token = localStorage.getItem("farmbridge_token");
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {})
-    }
-  });
+  let response;
+  try {
+    response = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {})
+      }
+    });
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("The FarmBridge API request was cancelled.");
+    throw new Error("Cannot reach the FarmBridge API. Confirm Flask is running and the API URL is correct, then try again.");
+  }
 
-  const data = await response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    data = { error: `The API returned an unreadable response (HTTP ${response.status}).` };
+  }
 
   if (!response.ok) {
     const jwtFailure = token && (

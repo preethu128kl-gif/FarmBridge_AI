@@ -467,3 +467,177 @@
     padding: 20px;
   }
 }
+/* Assistant chat panels: fixed chrome with a contained, independently scrolling thread. */
+.assistant-page {
+  display: flex;
+  width: 100%;
+  max-width: none;
+  height: calc(100dvh - 108px);
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+.assistant-page-head { flex: 0 0 auto; }
+.assistant-workspace { flex: 1 1 auto; min-height: 0; }
+.assistant-history { min-height: 0; }
+.assistant-history-list { flex: 1 1 auto; min-height: 0; max-height: none; }
+.assistant-chat-panel { min-height: 0; height: 100%; overflow: hidden; }
+.assistant-chat-topline,
+.assistant-voice-controls,
+.assistant-voice-error,
+.assistant-error,
+.assistant-composer,
+.assistant-disclaimer { flex-shrink: 0; }
+.assistant-thread { overscroll-behavior: contain; scrollbar-gutter: stable; }
+.assistant-messages {
+  width: 100%;
+  max-width: none;
+  flex: 0 0 auto;
+  padding: 26px clamp(20px, 3vw, 48px);
+}
+.assistant-message.assistant { max-width: 96%; }
+.assistant-message p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant-composer textarea { resize: none; max-height: 24dvh; overflow-y: auto; }
+
+/* Let the Farmer assistant fill its actual dashboard content slot. */
+.farmer-content.assistant-active {
+  display: flex;
+  height: calc(100dvh - 61px);
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 15px;
+}
+.farmer-content.assistant-active > .assistant-page {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+.farmer-content.assistant-active .assistant-page-head {
+  margin-bottom: 12px;
+}
+.farmer-content.assistant-active .assistant-page-head h1 {
+  margin: 7px 0 3px;
+  font-size: 29px;
+  line-height: 1.15;
+}
+.farmer-content.assistant-active .assistant-page-head p {
+  margin: 0;
+}
+.farmer-content.assistant-active .assistant-workspace {
+  grid-template-columns: minmax(180px, 210px) minmax(0, 1fr);
+}
+.farmer-content.assistant-active .assistant-history-open span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+.farmer-content.assistant-active .assistant-chat-panel {
+  height: 100%;
+  min-height: 0;
+}
+.farmer-content.assistant-active .assistant-thread {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.farmer-content.assistant-active .assistant-thread.has-messages {
+  justify-content: flex-start;
+}
+.farmer-content.assistant-active .assistant-messages {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+.farmer-content.assistant-active .assistant-message.assistant {
+  width: min(100%, 1280px);
+  max-width: 100%;
+}
+
+.assistant.box {
+  display: flex;
+  height: min(70dvh, 660px);
+  min-height: 390px;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+.assistant-head { flex: 0 0 auto; }
+.consumer-ai-thread {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px -2px;
+  padding: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.consumer-ai-starters { display: grid; gap: 5px; }
+.consumer-ai-starters button {
+  width: 100%;
+  border: 1px solid #e1e7e1;
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px;
+  text-align: left;
+  font-size: 8px;
+}
+.consumer-ai-message {
+  max-width: 92%;
+  padding: 8px 9px;
+  border: 1px solid #e1e9df;
+  border-radius: 8px 8px 8px 2px;
+  background: #f3f8f1;
+  overflow-wrap: anywhere;
+}
+.consumer-ai-message.user {
+  align-self: flex-end;
+  border-radius: 8px 8px 2px 8px;
+  background: #eaf5e7;
+}
+.consumer-ai-message b { display: block; color: #718075; font-size: 7px; }
+.consumer-ai-message p { margin: 4px 0 0; font-size: 9px; line-height: 1.55; white-space: pre-wrap; }
+.consumer-ai-status,.consumer-ai-error { flex: 0 0 auto; font-size: 8px; line-height: 1.5; }
+.consumer-ai-status { padding: 5px; color: #397348; }
+.consumer-ai-error { padding: 7px; color: #9c442f; }
+.ask { flex: 0 0 auto; align-items: stretch; margin-top: 4px; }
+.ask textarea {
+  width: 0;
+  min-width: 0;
+  min-height: 36px;
+  max-height: 20dvh;
+  flex: 1 1 auto;
+  resize: none;
+  overflow-y: auto;
+  border: 1px solid #dfe5df;
+  border-radius: 6px 0 0 6px;
+  padding: 8px;
+  font-size: 9px;
+  line-height: 1.4;
+}
+.ask button { flex: 0 0 36px; }
+@media (max-width: 900px) {
+  .assistant-page { height: calc(100dvh - 108px); }
+  .assistant-workspace { min-height: 0; }
+  .assistant-chat-panel { min-height: 0; }
+  .assistant-thread { min-height: 0; }
+  .assistant-messages { padding: 20px 14px; }
+}
+@media (max-width: 640px) {
+  .assistant-page { height: calc(100dvh - 108px); padding: 12px 8px; }
+  .assistant-workspace { min-height: 0; }
+  .assistant-chat-panel { min-height: 0; }
+  .assistant-thread { min-height: 0; }
+  .assistant-voice-controls { flex-wrap: wrap; }
+  .assistant.box { height: min(64dvh, 580px); min-height: 340px; }
+  .farmer-content.assistant-active { height: calc(100dvh - 61px); padding: 8px; }
+  .farmer-content.assistant-active .assistant-workspace { grid-template-columns: minmax(0, 1fr); }
+  .farmer-content.assistant-active .assistant-messages { padding: 20px 14px; }
+}

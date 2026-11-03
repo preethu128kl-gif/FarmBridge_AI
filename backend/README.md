@@ -44,13 +44,16 @@ The landing screen itself is frontend UI. Authentication and role-specific data 
 - Profile: GET/PUT `/api/profile`
 - Previous-year data: GET/POST `/api/crops/previous-year`
 - Crop summary: GET `/api/crops/summary`
-- Fertility: GET `/api/crops/fertility`
 - AI farming assistant: POST `/api/ai/farming-assistant`
 - Transport partners: GET `/api/transport/partners`
 - AI-style transport matching: POST `/api/transport/match`
-- Assign transport: POST `/api/orders/<id>/transport`
+- Delivery requests are created automatically at checkout and accepted by the partner from `POST /api/partner/requests/<id>/accept`.
+- Retry matching: POST `/api/orders/<id>/transport/retry`
 - Share order: POST `/api/orders/<id>/share`
 - Shared orders: GET `/api/orders/shared`
+
+Previous Year Market Prices are not implemented. Adding them later will require
+a verified market-price data source and its access/licensing configuration.
 
 ## Frontend integration
 
@@ -58,7 +61,9 @@ The React frontend uses this Flask API for authentication, products, cart,
 wishlist, checkout, orders, farmer tools, and the farming assistant. Product
 images uploaded by farmers are compressed in the browser and persisted in the
 existing PostgreSQL `products.image` text column. Product categories are inferred
-from recognized English/Kannada names; ambiguous names require a correction.
+from recognized English and Kannada names; ambiguous names require a correction
+instead of being silently misclassified. Product names and descriptions accept
+Kannada and English text.
 
 ## PostgreSQL setup
 
@@ -162,22 +167,32 @@ For protected requests:
 
 Set `GROQ_API_KEY` in `backend/.env` to enable Groq-backed farming answers for
 both signed-in consumers and farmers. The key is read only by Flask and must
-never be added to frontend environment variables. Without it, the existing
-local farming guidance remains available.
+never be added to frontend environment variables. Without it, the assistant
+returns a clear configuration error and does not present canned answers as AI output.
 
-Google sign-in is not implemented or simulated. The frontend option remains
-disabled until a backend OAuth flow is configured. Create a Google OAuth 2.0
-Web client and register `http://localhost:5000/api/auth/google/callback` as its
-authorized redirect URI. Configure `GOOGLE_CLIENT_ID` and
-`GOOGLE_CLIENT_SECRET` in the backend environment, implement and test that
-callback, and only then enable the frontend option. Use the deployment's HTTPS
-callback URL outside local development. Never expose the client secret to the
-browser.
+Google sign-in uses Google Identity Services in the frontend and server-side
+ID-token validation. Set the same OAuth Web client ID in `backend/.env` as
+`GOOGLE_CLIENT_ID` and `frontend/.env` as `VITE_GOOGLE_CLIENT_ID`; configure
+authorized JavaScript origins for your frontend host. Flask verifies the token
+signature, audience, issuer and verified email. This flow does not use a
+redirect callback or client secret. Existing email/mobile-password login
+remains available.
 
-This project also does not connect a real payment gateway, map service, or
-SMS/OTP provider; demo payments remain simulations.
+Delivery partner accounts and farmer sales records are stored in additive
+PostgreSQL tables. Partner document status remains `unverified`; no
+document-review process is configured. Matching requires pickup and service
+locality text plus sufficient vehicle capacity. When a service radius is set,
+partners must provide service coordinates and farmers must enter pickup
+coordinates in Profile. Matching uses their straight-line distance. Per-kilometre
+fares use that distance as an estimate and remain unavailable if distance or
+rate data is missing. Participants can retry matching; requests expire after
+24 hours. Partner password reset requires SMTP configuration.
+
+This project does not connect a real payment gateway; demo payments remain simulations. No map/geocoding service or SMS/OTP provider is configured.
 
 ## Production note
 
 For deployment, use environment variables, HTTPS, a managed PostgreSQL database,
 a production WSGI server such as Gunicorn, and a proper secret. Do not commit `.env`.
+Demo records are not inserted on startup. Set `SEED_DEMO_DATA=true` only for an
+empty development database where demo fixtures are wanted.
