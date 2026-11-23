@@ -1,7 +1,8 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "./api";
 import FarmingAssistant from "./FarmingAssistant";
 import TransportPartnerPortal from "./TransportPartnerPortal";
+import GoogleLogin from "./GoogleLogin";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft, ArrowRight, Bell, Boxes, Check, ChevronDown, Globe2, Heart,
@@ -406,6 +407,7 @@ function Consumer({lang,setLang,go}) {
   if (view === "notifications") return <NotificationsPage go={()=>setView("home")}/>;
   if (view === "checkout") return <CheckoutView cart={cart} loadCart={loadCart} go={()=>setView("home")} onDone={()=>setView("orders")}/>;
   if (view === "details" && selectedProduct) return <ProductDetails product={selectedProduct} go={()=>setView("home")} addToCart={addToCart} buyNow={buyNow} liked={isWishlisted(selectedProduct)} onWishlist={()=>toggleWishlist(selectedProduct)}/>;
+  if (view === "assistant") return <ConsumerAssistantPage lang={lang} setLang={setLang} goHome={()=>setView("home")} t={t}/>;
 
   return <div className="consumer-page">
     <Top lang={lang} setLang={setLang} back={()=>go("landing")} go={go}/>
@@ -414,6 +416,7 @@ function Consumer({lang,setLang,go}) {
       <div className="consumer-nav">
         {[["home",t.home],["vegetables",t.vegetables],["fruits",t.fruits],["grains",t.grains],["spices",t.spices],["dairy",t.dairy]].map(([key,label])=><button key={key} className={(key==="home"&&!category)||category===key?"active":""} onClick={()=>{setCategory(key==="home"?null:key);setView("home")}}>{label}</button>)}
         <button onClick={()=>loggedIn?setView("orders"):requireLogin()}>{t.orders}</button>
+        <button onClick={()=>loggedIn?setView("assistant"):requireLogin()}>{t.assistant}</button>
         <button onClick={()=>loggedIn?setView("wishlist"):requireLogin()}>Wishlist</button>
       </div>
       <div className="consumer-actions">
@@ -440,7 +443,7 @@ function Consumer({lang,setLang,go}) {
         <section className="box product-section"><div className="title"><h2>{category?`${t[category]} • ${t.recommended}`:t.recommended}</h2><a onClick={()=>setCategory(category||"vegetables")}>{t.viewAll}</a></div><div className="product-grid">{visible.slice(0,10).map(p=><Product key={p.id} p={p} t={t} onCart={()=>addToCart(p)} onBuy={()=>buyNow(p)} liked={isWishlisted(p)} onWishlist={()=>toggleWishlist(p)} onOpen={()=>openProduct(p)}/>)}</div>{!visible.length&&<div className="empty">No products found. Try another search.</div>}</section>
         <div className="promos"><Promo t={t.combo} s="Fresh Vegetables Combo"/><Promo t={t.free} s="On orders above ₹499"/><Promo t={t.best} s="Direct from Farmers"/></div>
       </main>
-      <aside className="right"><Orders t={t} onLogin={()=>loggedIn?setView("orders"):requireLogin()}/><Assistant t={t} lang={lang} loggedIn={loggedIn} onLogin={requireLogin}/></aside>
+      <aside className="right"><Orders t={t} onLogin={()=>loggedIn?setView("orders"):requireLogin()}/><Assistant t={t} lang={lang} loggedIn={loggedIn} onLogin={requireLogin} onOpen={()=>loggedIn?setView("assistant"):requireLogin()}/></aside>
     </div>
     {cart.length>0&&<div className="toast">{cart.length} item(s) in cart <button onClick={()=>setView("cart")}>View Cart</button></div>}
   </div>;
@@ -526,7 +529,16 @@ function Orders({t,onLogin}) {
 }
 
 
-function Assistant({t,lang,loggedIn,onLogin}) {
+function ConsumerAssistantPage({lang,setLang,goHome,t}) {
+  return <div className="consumer-page consumer-assistant-page">
+    <Top lang={lang} setLang={setLang} back={goHome} go={()=>{}}/>
+    <main className="consumer-assistant-main">
+      <FarmingAssistant t={t} lang={lang}/>
+    </main>
+  </div>;
+}
+
+function Assistant({t,lang,loggedIn,onLogin,onOpen}) {
   const [question,setQuestion] = useState("");
   const [messages,setMessages] = useState([]);
   const [conversationId,setConversationId] = useState(null);
@@ -572,6 +584,7 @@ function Assistant({t,lang,loggedIn,onLogin}) {
           <small>{t.ask}</small>
         </div>
       </div>
+      <button type="button" className="consumer-ai-expand" onClick={onOpen}>Open full assistant <ArrowRight size={13}/></button>
 
       <div className="consumer-ai-thread" ref={messagesRef} onScroll={event=>{
         const node=event.currentTarget;
@@ -1015,8 +1028,6 @@ function Auth({role,mode,lang,setLang,go}) {
     </div>
   );
 }
-
-function GoogleLogin({role,go}){const clientId=import.meta.env.VITE_GOOGLE_CLIENT_ID;const [error,setError]=useState("");useEffect(()=>{if(!clientId)return;let active=true;const init=()=>{if(!active||!window.google?.accounts?.id)return;window.google.accounts.id.initialize({client_id:clientId,callback:async response=>{try{const d=await apiRequest("/auth/google",{method:"POST",body:JSON.stringify({credential:response.credential,role})});localStorage.setItem("farmbridge_token",d.token);localStorage.setItem("farmbridge_user",JSON.stringify(d.user));go(role)}catch(e){setError(e.message)}}});const node=document.getElementById(`google-signin-${role}`);if(node)window.google.accounts.id.renderButton(node,{theme:"outline",size:"large",text:"continue_with",width:280})};if(window.google?.accounts?.id)init();else{let script=document.querySelector("script[data-google-identity]");if(!script){script=document.createElement("script");script.src="https://accounts.google.com/gsi/client";script.async=true;script.defer=true;script.dataset.googleIdentity="true";document.head.appendChild(script)}script.addEventListener("load",init)}return()=>{active=false}},[clientId,role,go]);return <div className="google-login-wrap">{clientId?<div id={`google-signin-${role}`}/>:<button className="google-login" type="button" disabled title="Set VITE_GOOGLE_CLIENT_ID and backend GOOGLE_CLIENT_ID">G&nbsp; Continue with Google (setup required)</button>}{error&&<small role="alert">{error}</small>}</div>}
 
 const farmerMenu = [
   ["dashboard",BarChart3],["products",Boxes],["addProduct",Plus],["myOrders",ClipboardList],["deliveries",Truck],["assistant",BrainCircuit],["previous",History],["transport",Truck],["matching",Sparkles],["earnings",CircleDollarSign],["profile",UserRound]

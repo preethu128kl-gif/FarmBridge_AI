@@ -641,3 +641,176 @@
   .farmer-content.assistant-active .assistant-workspace { grid-template-columns: minmax(0, 1fr); }
   .farmer-content.assistant-active .assistant-messages { padding: 20px 14px; }
 }
+
+/* Keep the Google sign-in surface aligned with the email/password form. */
+.auth { overflow-x: hidden; }
+.auth-wrap {
+  box-sizing: border-box;
+  min-height: calc(100svh - 78px);
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+  gap: clamp(24px, 4vw, 64px);
+  padding: clamp(20px, 4vh, 40px) clamp(18px, 7vw, 96px);
+}
+.auth-card {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: clamp(24px, 3vw, 34px);
+}
+.auth-card input { box-sizing: border-box; }
+.google-login-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 13px;
+}
+.google-login-button,
+.google-login-button iframe {
+  display: block;
+  width: 100%;
+  max-width: 400px;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+.google-login-status,
+.google-login-error {
+  display: block;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+}
+.google-login-status { color: #68776d; }
+.google-login-error { color: #a13d2d; }
+.google-login {
+  min-height: 44px;
+  width: 100%;
+  margin: 0;
+  border-color: #d7e2d8;
+  color: #293a2d;
+}
+.auth-card > small { font-size: 10px; line-height: 1.5; }
+.auth-card .switch { font-size: 12px; }
+
+/* Count dashboard padding inside the Farmer assistant's available viewport slot. */
+.farmer-content.assistant-active {
+  box-sizing: border-box;
+  height: calc(100dvh - 61px);
+}
+.farmer-content.assistant-active > .assistant-page,
+.farmer-content.assistant-active .assistant-workspace { min-height: 0; }
+
+/* The Consumer dashboard opens the same full chat, history and AI integration. */
+.consumer-assistant-page {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+.consumer-assistant-main {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 12px clamp(12px, 2vw, 26px) 18px;
+}
+.consumer-assistant-main > .assistant-page {
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 0;
+}
+.consumer-assistant-page .assistant-workspace { min-height: 0; }
+.consumer-assistant-page .assistant-chat-panel {
+  height: auto;
+  min-height: 0;
+}
+.consumer-assistant-page .assistant-thread {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.consumer-assistant-page .assistant-thread.has-messages { justify-content: flex-start; }
+.consumer-assistant-page .assistant-messages { min-width: 0; }
+.consumer-assistant-page .assistant-message.assistant {
+  width: min(100%, 1280px);
+  max-width: 100%;
+}
+.consumer-assistant-page .assistant-page-head h1 { font-size: 29px; }
+.consumer-assistant-page .assistant-workspace {
+  grid-template-columns: minmax(190px, 220px) minmax(0, 1fr);
+}
+.consumer-ai-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  margin: 5px 0 6px;
+  border: 1px solid #d7e6d7;
+  border-radius: 7px;
+  background: #f5faf3;
+  color: #17683b;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .auth-wrap {
+    min-height: calc(100svh - 78px);
+    grid-template-columns: minmax(0, 1fr);
+    padding: 22px 5%;
+  }
+  .auth-art { min-height: clamp(190px, 28vh, 280px); }
+  .auth-card { width: min(100%, 560px); justify-self: center; }
+  .consumer-assistant-main { padding: 10px 12px 14px; }
+}
+@media (max-width: 640px) {
+  .auth-wrap { padding: 14px 13px 24px; gap: 14px; }
+  .auth > .top {
+    height: auto;
+    min-height: 72px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 13px;
+  }
+  .auth .top nav { display: none; }
+  .auth > .top > .back {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    padding: 0;
+    font-size: 0;
+  }
+  .auth > .top .logo { margin-right: auto; }
+  .auth > .top .lang { margin-left: auto; }
+  .auth-art { min-height: 175px; }
+  .auth-card { padding: 21px 18px; border-radius: 17px; }
+  .auth-card h1 { margin-top: 12px; font-size: 25px; }
+  .google-login-button { max-width: 100%; }
+  .consumer-assistant-page .assistant-workspace { grid-template-columns: minmax(0, 1fr); }
+  .consumer-assistant-page .assistant-history {
+    max-height: 132px;
+    padding: 9px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #e6ede6;
+  }
+  .consumer-assistant-page .assistant-history-list {
+    max-height: 68px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .consumer-assistant-page .assistant-history-note { display: none; }
+  .consumer-assistant-page .assistant-history-delete { opacity: 1; }
+  .consumer-assistant-page .assistant-page-head h1 { font-size: 23px; }
+  .consumer-assistant-page .assistant-page-head p { max-width: 230px; font-size: 11px; }
+  .consumer-assistant-page .assistant-chat-topline { min-height: 48px; padding: 0 12px; }
+  .consumer-assistant-page .assistant-voice-controls { flex-wrap: wrap; }
+  .consumer-assistant-page .assistant-composer { margin: 8px 10px 0; }
+  .consumer-assistant-page .assistant-disclaimer { margin: 7px 10px 10px; }
+}

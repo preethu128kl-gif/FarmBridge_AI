@@ -1638,34 +1638,70 @@ def add_farmer_sale():
     return jsonify({"record": sale_dict(row)}), 201
 
 
-@app.post("/api/auth/google")
-def google_login():
+def verify_google_credential(credential):
     client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
-    credential = (request.get_json(silent=True) or {}).get("credential", "")
-    role = (request.get_json(silent=True) or {}).get("role", "consumer")
     if not client_id:
-        return jsonify({"error": "Google sign-in is not configured. Set GOOGLE_CLIENT_ID and VITE_GOOGLE_CLIENT_ID."}), 503
-    if role not in ("consumer", "farmer") or not credential:
-        return jsonify({"error": "A Google credential and valid account role are required"}), 400
+        return None, (jsonify({"error": "Google sign-in is not configured. Set GOOGLE_CLIENT_ID and VITE_GOOGLE_CLIENT_ID."}), 503)
     if not isinstance(credential, str) or len(credential) > 10000:
-        return jsonify({"error": "Google credential is invalid"}), 401
+        return None, (jsonify({"error": "Google credential is invalid"}), 401)
     try:
         signing_key = google_jwks.get_signing_key_from_jwt(credential)
         claims = pyjwt.decode(credential, signing_key.key, algorithms=["RS256"], audience=client_id,
                               issuer=["https://accounts.google.com", "accounts.google.com"])
     except Exception:
-        return jsonify({"error": "Google credential could not be verified"}), 401
+        return None, (jsonify({"error": "Google credential could not be verified"}), 401)
     if claims.get("email_verified") not in (True, "true"):
-        return jsonify({"error": "Google credential validation failed"}), 401
+        return None, (jsonify({"error": "Google credential validation failed"}), 401)
     email = str(claims.get("email", "")).strip().lower()
     name = str(claims.get("name", "")).strip()[:120]
-    if not email or not name: return jsonify({"error": "Google account is missing a verified email or name"}), 401
+    subject = str(claims.get("sub", "")).strip()
+    if not email or not name or not subject:
+        return None, (jsonify({"error": "Google account is missing a verified email, name or subject"}), 401)
+    return {"email": email, "name": name, "subject": subject}, None
+
+
+@app.post("/api/auth/google")
+def google_login():
+    data = request.get_json(silent=True) or {}
+    credential = data.get("credential", "")
+    role = data.get("role", "consumer")
+    if role not in ("consumer", "farmer") or not credential:
+        return jsonify({"error": "A Google credential and valid account role are required"}), 400
+    claims, failure = verify_google_credential(credential)
+    if failure:
+        return failure
+    email, name = claims["email"], claims["name"]
     user = User.query.filter_by(email=email).first()
     if user and user.role != role: return jsonify({"error": f"This account is registered as {user.role}"}), 403
     if not user:
         user = User(name=name, email=email, password_hash=generate_password_hash(secrets.token_urlsafe(32)), role=role, verified=True)
         db.session.add(user); db.session.commit()
     return jsonify({"token": create_access_token(identity=str(user.id)), "user": user_dict(user)})
+
+
+@app.post("/api/partner/google")
+def partner_google_login():
+    data = request.get_json(silent=True) or {}
+    claims, failure = verify_google_credential(data.get("credential", ""))
+    if failure:
+        return failure
+
+    email = claims["email"]
+    user = User.query.filter_by(email=email).first()
+    if user:
+        role_name = "Farmer" if user.role == "farmer" else "Consumer"
+        return jsonify({
+            "error": f"This Google account is registered as a {role_name}. Sign in through the {role_name} portal, or use another Google account for Transport Partner access."
+        }), 403
+
+    partner = DeliveryPartner.query.filter_by(email=email).first()
+    if not partner:
+        return jsonify({"registrationRequired": True, "email": email, "name": claims["name"]}), 200
+
+    return jsonify({
+        "token": create_access_token(identity=f"partner:{partner.id}"),
+        "partner": partner_public(partner),
+    })
 
 
 def partner_public(p):
@@ -1697,9 +1733,23 @@ def partner_register():
     # Targeted diagnostics omit submitted values, credentials and file contents.
     app.logger.info("Partner registration request: content_type=%s fields=%s files=%s",
                     request.mimetype, sorted(d.keys()), sorted(request.files.keys()))
-    required = {"name": "Full name is required.", "password": "Password is required."}
-    errors = {key: message for key, message in required.items() if not str(d.get(key, "")).strip()}
-    email_value = str(d.get("email", "")).strip().lower()
+    google_credential = str(d.get("googleCredential", "")).strip()
+    google_claims = None
+    if google_credential:
+        google_claims, failure = verify_google_credential(google_credential)
+        if failure:
+            return failure
+
+    name_value = google_claims["name"] if google_claims else str(d.get("name", "")).strip()
+    password_value = str(d.get("password", ""))
+    if google_claims and not password_value:
+        password_value = secrets.token_urlsafe(32)
+    required = {"name": "Full name is required."}
+    if not google_claims:
+        required["password"] = "Password is required."
+    errors = {key: message for key, message in required.items()
+              if not (name_value if key == "name" else password_value).strip()}
+    email_value = google_claims["email"] if google_claims else str(d.get("email", "")).strip().lower()
     mobile_value = str(d.get("mobile", "")).strip()
     email = email_value or None
     mobile = mobile_value or None
@@ -1708,7 +1758,16 @@ def partner_register():
         errors["mobile"] = "Enter an email address or mobile number."
     if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email): errors["email"] = "Enter a valid email address."
     if mobile and not re.fullmatch(r"\+?[0-9 ()-]{7,20}", mobile): errors["mobile"] = "Enter a valid mobile number."
-    if not isinstance(d.get("password"), str) or len(d["password"]) < 8: errors["password"] = "Use at least 8 characters."
+    if not google_claims and (not isinstance(d.get("password"), str) or len(password_value) < 8):
+        errors["password"] = "Use at least 8 characters."
+
+    if google_claims:
+        account = User.query.filter_by(email=email).first()
+        if account:
+            role_name = "Farmer" if account.role == "farmer" else "Consumer"
+            return jsonify({"error": f"This Google account is registered as a {role_name}. Use the {role_name} portal or a different Google account."}), 403
+        if DeliveryPartner.query.filter_by(email=email).first():
+            return jsonify({"error": "A Transport Partner account already uses this Google email. Return to login and choose Continue with Google."}), 409
 
     def optional_number(field, label, positive=False):
         raw = str(d.get(field, "")).strip()
@@ -1791,8 +1850,8 @@ def partner_register():
     def optional_text(field):
         return str(d.get(field, "")).strip() or None
 
-    p = DeliveryPartner(name=str(d["name"]).strip(), mobile=mobile, email=email,
-        password_hash=generate_password_hash(d["password"]), address=optional_text("address"),
+    p = DeliveryPartner(name=name_value, mobile=mobile, email=email,
+        password_hash=generate_password_hash(password_value), address=optional_text("address"),
         city=optional_text("city"), pincode=optional_text("pincode"),
         vehicle_type=optional_text("vehicleType"), vehicle_registration=reg, capacity_kg=capacity,
         vehicle_photo=vehicle_photo or None, license_number=optional_text("licenseNumber"),
@@ -2168,6 +2227,53 @@ def delete_ai_conversation(conversation_id):
     return jsonify({"message": "Conversation deleted"})
 
 
+def farmer_sales_context_for_ai(user, message):
+    normalized = unicodedata.normalize("NFKC", message).casefold()
+    sales_intent = (
+        "sales", "sale record", "sale history", "sales history", "my sale", "my sales",
+        "what did i sell", "how much did i sell", "how many did i sell", "crop record",
+        "my harvest", "previous year crop", "previous year's crop", "last year crop",
+        "ಮಾರಾಟ", "ಹಿಂದಿನ ವರ್ಷದ ಬೆಳೆ", "ಹಿಂದಿನ ವರ್ಷ", "ಬೆಳೆ ದಾಖಲೆ", "ನನ್ನ ಬೆಳೆ",
+    )
+    if not any(term in normalized for term in sales_intent):
+        return None
+
+    year_match = re.search(r"\b(20\d{2})\b", normalized)
+    previous_year_requested = any(term in normalized for term in (
+        "previous year", "previous year's", "last year", "last year's",
+        "ಹಿಂದಿನ ವರ್ಷ", "ಹಿಂದಿನ ವರ್ಷದ",
+    ))
+    year = int(year_match.group(1)) if year_match else (datetime.utcnow().year - 1 if previous_year_requested else None)
+    query = FarmerSaleRecord.query.filter_by(farmer_id=user.id)
+    if year is not None and 2000 <= year <= 2100:
+        query = query.filter(db.extract("year", FarmerSaleRecord.selling_date) == year)
+    else:
+        year = None
+
+    summary_query = db.session.query(
+        FarmerSaleRecord.unit,
+        func.sum(FarmerSaleRecord.quantity),
+        func.sum(FarmerSaleRecord.quantity * FarmerSaleRecord.selling_price),
+        func.count(FarmerSaleRecord.id),
+    ).filter(FarmerSaleRecord.farmer_id == user.id)
+    if year is not None:
+        summary_query = summary_query.filter(db.extract("year", FarmerSaleRecord.selling_date) == year)
+    summaries = summary_query.group_by(FarmerSaleRecord.unit).all()
+    records = query.order_by(FarmerSaleRecord.selling_date.desc(), FarmerSaleRecord.id.desc()).limit(30).all()
+    return {
+        "scope": "Only sale records owned by the authenticated farmer",
+        "year": year,
+        "recordCount": sum(int(row[3] or 0) for row in summaries),
+        "totalsByUnit": [
+            {"unit": row[0], "quantity": round(float(row[1] or 0), 3),
+             "salesAmount": round(float(row[2] or 0), 2), "recordCount": int(row[3] or 0)}
+            for row in summaries
+        ],
+        "records": [sale_dict(row) for row in records],
+        "recordsLimitedTo": 30,
+    }
+
+
 @app.post("/api/ai/farming-assistant")
 @jwt_required()
 def farming_assistant():
@@ -2219,23 +2325,41 @@ def farming_assistant():
 
     if user.role == "consumer":
         role_context = (
-            "The authenticated user is a CONSUMER. Use the actual Consumer dashboard labels: Home/category navigation and "
-            "the search field browse farmer listings; open a product for its details; use Add to Cart or Buy Now, then "
-            "Cart and Checkout; use Wishlist for saved products; use My Orders to review purchases and order tracking; "
-            "Profile and Notifications are also available. At checkout an order can "
-            "create a transport request; eligible available delivery partners receive it, and the first valid acceptance "
-            "assigns transport. Explain only these existing workflows."
+            "The authenticated user is a CONSUMER. For FarmBridge help, use the actual Consumer dashboard labels: "
+            "browse Home or a category and search; open a product for its listed details and availability; use Add to Cart "
+            "or Buy Now, then Cart and Checkout; use Wishlist for saved products; use My Orders for purchases and delivery "
+            "tracking; Profile and Notifications are also available. At checkout, submitting an order creates a transport "
+            "request for eligible available delivery partners, and the first valid partner acceptance assigns transport. "
+            "Explain these steps clearly. This assistant cannot inspect live listings, stock, a consumer's orders or delivery "
+            "status; direct the user to the relevant page instead of guessing those values."
         )
     elif user.role == "farmer":
         role_context = (
-            "The authenticated user is a FARMER. Use the actual Farmer dashboard labels: Add Product and My Products manage "
-            "listings; Orders and Deliveries show order and delivery progress; Previous Year Crop Details and sales records "
-            "show farm history; Transport Matching shows matching information; Earnings and Profile are available. "
-            "Consumer checkout creates a transport request automatically; eligible delivery partners receive it and the "
-            "first valid acceptance assigns it. Farmers do not manually assign a partner. Explain only these workflows."
+            "The authenticated user is a FARMER. For FarmBridge help, use the actual Farmer dashboard labels: Add Product "
+            "and My Products manage listings; Orders and Deliveries show order and delivery progress; Previous Year Crop "
+            "Details contains the farmer's entered historical crop sales; Transport Matching shows matching information; "
+            "Earnings and Profile are also available. To add a listing, open Add Product, enter the product, price, stock "
+            "and other requested fields, then save. To review historical sales, open Previous Year Crop Details and use "
+            "its filters or add-record form. Consumer checkout creates a transport request automatically; an eligible "
+            "available partner's first valid acceptance assigns transport. Farmers do not manually assign a partner. "
+            "This assistant may receive only the authenticated farmer's own sale-record snapshot when the farmer asks "
+            "about saved sales. It cannot inspect live listings, earnings, orders or deliveries, or any other farmer's "
+            "records; give the correct page and steps instead of guessing values."
         )
     else:
         return jsonify({"error": "This account cannot use the farming assistant"}), 403
+
+    authorized_data_context = ""
+    if user.role == "farmer":
+        sales_snapshot = farmer_sales_context_for_ai(user, message)
+        if sales_snapshot is not None:
+            authorized_data_context = (
+                " AUTHENTICATED FARMER SALES SNAPSHOT (private, filtered to this user's own saved records; "
+                "use only to answer this farmer's sales question; records are capped at 30): "
+                + json.dumps(sales_snapshot, ensure_ascii=False)
+                + ". If recordCount is zero, say no saved records were found for that period. Do not infer crop yield, "
+                "unsaved harvests, or totals beyond the supplied snapshot."
+            )
 
     prompt = [
         {
@@ -2243,9 +2367,16 @@ def farming_assistant():
             "content": (
                 "You are FarmBridge AI, a practical farming and FarmBridge website assistant. " + role_context + " "
                 "For website questions give concise numbered steps that match the authenticated user's role and the "
-                "features described here. Do not claim to see or change account, order, sales or product data; do not "
-                "claim to perform actions. Never reveal private data. If a feature is not described, say you cannot "
-                "confirm it instead of inventing a page, button or API. " + language_instruction + " "
+                "features described here. For farming questions, focus on crop selection, soil preparation and fertility, "
+                "nutrients, irrigation, sowing and harvest timing, productivity, weather precautions, and pest or disease "
+                "prevention. Ask for crop, growth stage, location or soil-test context when it materially affects advice. Avoid "
+                "invented local conditions and unsafe or unsupported chemical doses; recommend a local agronomist or soil test "
+                "when needed. Stay within farming and the FarmBridge_AI platform: if asked about unrelated topics, briefly "
+                "explain this scope and redirect to a farming or FarmBridge question. Never claim to see or change account, "
+                "order, delivery or product data, and never claim to perform actions. Never claim sales information beyond "
+                "the authorized snapshot included here. Never reveal private data. If a feature is not described, say you "
+                "cannot confirm it instead of inventing a page, button or API. "
+                + authorized_data_context + " " + language_instruction + " "
                 "Use prior messages to understand follow-ups, but match the language of the latest question. "
                 "Return only a JSON object with string keys 'language' and 'answer'. "
                 "Give clear, cautious agricultural guidance; do not invent local conditions or prescribe chemical doses. "

@@ -95,3 +95,16 @@
 .tp-main{background-color:rgba(241,246,239,.9);background-image:linear-gradient(rgba(241,246,239,.88),rgba(241,246,239,.91)),var(--tp-watermark);background-size:cover;background-position:center;background-repeat:no-repeat}
 @media(max-width:900px){.tp-auth-grid-login{grid-template-columns:minmax(0,1fr) minmax(320px,.9fr);padding:22px 24px 34px;gap:20px}.tp-hero-panel{min-height:500px}}
 @media(max-width:720px){.tp-auth-login{background-attachment:scroll}.tp-auth-grid-login{grid-template-columns:minmax(0,1fr);max-width:680px}.tp-hero-panel{min-height:clamp(240px,38vh,340px)}.tp-hero-copy{left:22px;right:22px;bottom:18px}.tp-hero-copy h2{font-size:27px}.tp-hero-copy ul{margin-top:10px;gap:5px 14px}.tp-auth-grid:not(.tp-auth-grid-login){max-width:680px}}
+
+.tp-auth-login .google-login-wrap { margin-top: 14px; }
+.tp-auth-login .google-login-button { width: 100%; max-width: 370px; min-width: 0; }
+.tp-google-note {
+  padding: 10px 12px;
+  border: 1px solid #d8e7d8;
+  border-radius: 9px;
+  background: #f4faf3;
+  color: #3d5d45;
+  font-size: 12px;
+  line-height: 1.5;
+}
+@media(max-width:720px){.tp-auth-login .tp-hero-panel{height:190px;min-height:190px}}
